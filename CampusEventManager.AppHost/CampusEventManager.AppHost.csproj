@@ -1,0 +1,16 @@
+<Project Sdk="Aspire.AppHost.Sdk/13.1.0">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <UserSecretsId>98fc4e87-0cc4-444b-b787-2402e6306f26</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\CampusEventManager.ApiService\CampusEventManager.ApiService.csproj" />
+    <ProjectReference Include="..\CampusEventManager.Web\CampusEventManager.Web.csproj" />
+  </ItemGroup>
+
+</Project>

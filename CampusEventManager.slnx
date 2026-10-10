@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="CampusEventManager.ApiService/CampusEventManager.ApiService.csproj" />
+  <Project Path="CampusEventManager.AppHost/CampusEventManager.AppHost.csproj" />
+  <Project Path="CampusEventManager.ServiceDefaults/CampusEventManager.ServiceDefaults.csproj" />
+  <Project Path="CampusEventManager.Web/CampusEventManager.Web.csproj" />
+</Solution>
