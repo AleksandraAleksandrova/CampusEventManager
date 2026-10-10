@@ -1,0 +1,132 @@
+@ApiService_HostAddress = http://localhost:5401
+
+# 1) GET all published events
+GET {{ApiService_HostAddress}}/api/events
+Accept: application/json
+
+###
+
+# 2) POST a valid future in-person event
+# Expected: 201 Created
+POST {{ApiService_HostAddress}}/api/events
+Content-Type: application/json
+
+{
+  "title": "Campus Orientation",
+  "description": "Welcome event for new students.",
+  "startDateTime": "2099-09-01T10:00:00Z",
+  "endDateTime": "2099-09-01T12:00:00Z",
+  "isVirtual": false,
+  "location": "Main Hall",
+  "meetingUrl": null,
+  "capacity": 200,
+  "createdByUserId": "organizer-1"
+}
+
+###
+
+# 3) GET a single event using the ID returned by the create request
+# Replace {id} with the numeric Id returned in the Location header or response body from request #2
+# Expected: 200 OK (or 404 if not found)
+GET {{ApiService_HostAddress}}/api/events/{id}
+Accept: application/json
+
+###
+
+# 4) POST a valid future virtual event
+# Expected: 201 Created
+POST {{ApiService_HostAddress}}/api/events
+Content-Type: application/json
+
+{
+  "title": "Cloud Workshop (Online)",
+  "description": "Intro to cloud services.",
+  "startDateTime": "2099-10-15T14:00:00Z",
+  "endDateTime": "2099-10-15T16:00:00Z",
+  "isVirtual": true,
+  "location": null,
+  "meetingUrl": "https://meet.example.com/cloud-workshop",
+  "capacity": 100,
+  "createdByUserId": "organizer-2"
+}
+
+###
+
+# 5) PUT an existing event to update its details
+# Replace {id} with an existing event id. Expected: 200 OK if successful, 400 if validation fails, 404 if not found
+PUT {{ApiService_HostAddress}}/api/events/{id}
+Content-Type: application/json
+
+{
+  "title": "Campus Orientation - Updated",
+  "description": "Updated description for orientation.",
+  "startDateTime": "2099-09-01T11:00:00Z",
+  "endDateTime": "2099-09-01T13:00:00Z",
+  "isVirtual": false,
+  "location": "Main Hall, Room A",
+  "meetingUrl": null,
+  "capacity": 250,
+  "updatedByUserId": "organizer-1"
+}
+
+###
+
+# 6) POST to cancel an event
+# Replace {id} with an existing event id. Expected: 200 OK on success, 400 if already cancelled/completed
+POST {{ApiService_HostAddress}}/api/events/{id}/cancel
+Content-Type: application/json
+
+{
+  "updatedByUserId": "organizer-1"
+}
+
+###
+
+# 7) POST to complete an event that has already ended
+# Use an event id that exists and whose EndDateTime is in the past relative to now.
+# Replace {endedEventId} with that id. Expected: 200 OK when successful, 400 if event is still in the future or cancelled.
+POST {{ApiService_HostAddress}}/api/events/{endedEventId}/complete
+
+###
+
+# 8) Try creating an event with an end time before its start time (validation failure)
+# Expected: 400 Bad Request
+POST {{ApiService_HostAddress}}/api/events
+Content-Type: application/json
+
+{
+  "title": "Invalid Event",
+  "description": "End before start",
+  "startDateTime": "2099-12-01T12:00:00Z",
+  "endDateTime": "2099-12-01T10:00:00Z",
+  "isVirtual": false,
+  "location": "Room X",
+  "meetingUrl": null,
+  "capacity": 10,
+  "createdByUserId": "tester"
+}
+
+###
+
+# 9) Try creating an event with capacity 0 (validation failure)
+# Expected: 400 Bad Request
+POST {{ApiService_HostAddress}}/api/events
+Content-Type: application/json
+
+{
+  "title": "Zero Capacity Event",
+  "description": "Capacity 0 should be invalid",
+  "startDateTime": "2099-11-01T09:00:00Z",
+  "endDateTime": "2099-11-01T10:00:00Z",
+  "isVirtual": false,
+  "location": "Room Y",
+  "meetingUrl": null,
+  "capacity": 0,
+  "createdByUserId": "tester"
+}
+
+###
+
+# 10) Try completing a future event (should fail)
+# Replace {futureEventId} with an event id whose EndDateTime is in the future. Expected: 400 Bad Request
+POST {{ApiService_HostAddress}}/api/events/{id}/complete
