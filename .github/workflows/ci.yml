@@ -1,0 +1,33 @@
+
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build and test
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore CampusEventManager.slnx
+
+      - name: Build solution
+        run: dotnet build CampusEventManager.slnx --configuration Release --no-restore
+
+      - name: Run tests
+        run: dotnet test CampusEventManager.slnx --configuration Release --no-build --verbosity normal
