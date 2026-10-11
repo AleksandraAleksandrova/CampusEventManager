@@ -1,0 +1,28 @@
+@inject CampusEventManager.Web.Services.AuthService Auth
+@inject NavigationManager Nav
+
+@code {
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+
+    private bool checkedAuth = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Try to restore token/profile if available
+        await Auth.TryRestoreAsync();
+        if (Auth.CurrentUser is null)
+        {
+            // Redirect to login (force reload to clear any protected content)
+            Nav.NavigateTo("/login", true);
+            return;
+        }
+
+        checkedAuth = true;
+    }
+}
+
+@if (checkedAuth)
+{
+    @ChildContent
+}

@@ -1,0 +1,233 @@
+@page "/manage-events"
+@inject IHttpClientFactory HttpFactory
+@inject CampusEventManager.Web.Services.AuthService Auth
+
+<PageTitle>Manage Events</PageTitle>
+
+@if (Auth.CurrentUser is null)
+{
+    <p>Please <NavLink href="/login">sign in</NavLink> to manage events.</p>
+}
+else if (!Auth.CurrentUser.CanCreateEvents)
+{
+    <p>You do not have permission to manage events.</p>
+}
+else
+{
+    <h3>Your Events</h3>
+    @if (isLoading)
+    {
+        <p>Loading...</p>
+    }
+    else if (error is not null)
+    {
+        <div class="alert alert-danger">@error</div>
+    }
+    else if (!myEvents.Any())
+    {
+        <p>You have not created any events.</p>
+    }
+    else
+    {
+        <div class="list-group">
+            @foreach (var ev in myEvents)
+            {
+                <div class="list-group-item">
+                    <div class="d-flex w-100 justify-content-between">
+                        <h5 class="mb-1">@ev.Title</h5>
+                        <small>@ev.StartDateTime.ToLocalTime().ToString("g")</small>
+                    </div>
+                    <p class="mb-1">@ev.Description</p>
+                    <div>
+                        <button class="btn btn-sm btn-primary" @onclick="() => Edit(ev.Id)">Edit</button>
+                        <button class="btn btn-sm btn-warning ms-2" @onclick="() => Cancel(ev.Id)">Cancel</button>
+                        <button class="btn btn-sm btn-success ms-2" @onclick="() => MarkComplete(ev.Id)">Mark Complete</button>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+
+    <hr />
+    <h4>Create Event</h4>
+    <EditForm Model="createModel" OnValidSubmit="CreateEvent">
+        <DataAnnotationsValidator />
+        <div class="mb-3">
+            <label class="form-label">Title</label>
+            <InputText class="form-control" @bind-Value="createModel.Title" />
+        </div>
+        <div class="mb-3">
+            <label class="form-label">Start</label>
+            <InputDate class="form-control" @bind-Value="createModel.StartDateTime" />
+        </div>
+        <div class="mb-3">
+            <label class="form-label">End</label>
+            <InputDate class="form-control" @bind-Value="createModel.EndDateTime" />
+        </div>
+        <div class="mb-3">
+            <label class="form-label">Capacity (optional)</label>
+            <InputNumber class="form-control" @bind-Value="createModel.Capacity" />
+        </div>
+        <button class="btn btn-primary">Create</button>
+    </EditForm>
+
+    @if (createMessage is not null)
+    {
+        <div class="alert @createCss">@createMessage</div>
+    }
+}
+
+@code {
+    private bool isLoading = false;
+    private string? error;
+    private List<CampusEventManager.Web.Models.EventDto> myEvents = new();
+
+    private CreateModel createModel = new() { StartDateTime = DateTime.UtcNow.AddDays(1), EndDateTime = DateTime.UtcNow.AddDays(1).AddHours(2) };
+    private string? createMessage;
+    private string createCss = "alert-info";
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Auth.IsRestored)
+        {
+            return;
+        }
+
+        if (Auth.CurrentUser is null)
+        {
+            NavigationManager.NavigateTo("/login", true);
+            return;
+        }
+
+        if (!Auth.CurrentUser.CanCreateEvents)
+        {
+            // show permission error
+            return;
+        }
+
+        await LoadMyEvents();
+    }
+
+    private async Task LoadMyEvents()
+    {
+        isLoading = true;
+        try
+        {
+            var client = HttpFactory.CreateClient("apiservice");
+            var events = await client.GetFromJsonAsync<List<CampusEventManager.Web.Models.EventDto>>("/api/events");
+            if (events != null)
+            {
+                myEvents = events.Where(e => e.CreatedByUserId == Auth.CurrentUser.Id.ToString()).ToList();
+            }
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void Edit(int id)
+    {
+        NavigationManager.NavigateTo($"/events/{id}");
+    }
+
+    private async Task Cancel(int id)
+    {
+        try
+        {
+            var client = HttpFactory.CreateClient("apiservice");
+            var resp = await client.PostAsJsonAsync($"/api/events/{id}/cancel", new { updatedByUserId = Auth.CurrentUser!.Id.ToString() });
+            if (resp.IsSuccessStatusCode)
+            {
+                await LoadMyEvents();
+            }
+            else
+            {
+                error = $"Failed to cancel event: {resp.StatusCode}";
+            }
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private async Task MarkComplete(int id)
+    {
+        try
+        {
+            var client = HttpFactory.CreateClient("apiservice");
+            var resp = await client.PostAsync($"/api/events/{id}/complete", null);
+            if (resp.IsSuccessStatusCode)
+            {
+                await LoadMyEvents();
+            }
+            else
+            {
+                error = $"Failed to mark complete: {resp.StatusCode}";
+            }
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private async Task CreateEvent()
+    {
+        createMessage = null;
+        try
+        {
+            var client = HttpFactory.CreateClient("apiservice");
+            var dto = new
+            {
+                title = createModel.Title,
+                description = createModel.Description,
+                startDateTime = createModel.StartDateTime,
+                endDateTime = createModel.EndDateTime,
+                isVirtual = createModel.IsVirtual,
+                location = createModel.Location,
+                meetingUrl = createModel.MeetingUrl,
+                capacity = createModel.Capacity,
+                createdByUserId = Auth.CurrentUser!.Id.ToString()
+            };
+
+            var resp = await client.PostAsJsonAsync("/api/events", dto);
+            if (resp.IsSuccessStatusCode)
+            {
+                createMessage = "Event created.";
+                createCss = "alert-success";
+                await LoadMyEvents();
+            }
+            else
+            {
+                createMessage = $"Failed to create event: {resp.StatusCode}";
+                createCss = "alert-danger";
+            }
+        }
+        catch (Exception ex)
+        {
+            createMessage = ex.Message;
+            createCss = "alert-danger";
+        }
+    }
+
+    [Inject]
+    private NavigationManager NavigationManager { get; set; } = null!;
+
+    private class CreateModel
+    {
+        public string Title { get; set; } = string.Empty;
+        public string? Description { get; set; }
+        public DateTime StartDateTime { get; set; }
+        public DateTime EndDateTime { get; set; }
+        public bool IsVirtual { get; set; }
+        public string? Location { get; set; }
+        public string? MeetingUrl { get; set; }
+        public int? Capacity { get; set; }
+    }
+}

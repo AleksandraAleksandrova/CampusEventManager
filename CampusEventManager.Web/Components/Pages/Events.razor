@@ -1,0 +1,80 @@
+@page "/events"
+@inject IHttpClientFactory HttpFactory
+@inject CampusEventManager.Web.Services.AuthService Auth
+@inject NavigationManager NavigationManager
+
+<PageTitle>Events</PageTitle>
+
+<h3>Published Events</h3>
+
+@if (isLoading)
+{
+    <p>Loading...</p>
+}
+else if (error is not null)
+{
+    <div class="alert alert-danger">@error</div>
+}
+else if (!events.Any())
+{
+    <p>No published events available.</p>
+}
+else
+{
+    <div class="list-group">
+        @foreach (var ev in events)
+        {
+            <a class="list-group-item list-group-item-action" href="/events/@ev.Id"> 
+                <div class="d-flex w-100 justify-content-between">
+                    <h5 class="mb-1">@ev.Title</h5>
+                    <small>@ev.StartDateTime.ToLocalTime().ToString("g")</small>
+                </div>
+                <p class="mb-1">@ev.Description</p>
+                <small>@(ev.IsVirtual ? ev.MeetingUrl : ev.Location) @if(ev.Capacity.HasValue){<text> · Capacity: @ev.Capacity</text>}</small>
+            </a>
+        }
+    </div>
+}
+
+@code {
+    private bool isLoading = true;
+    private string? error;
+    private List<CampusEventManager.Web.Models.EventDto> events = new();
+    private bool _loaded = false;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // Do not attempt JS interop here; Auth restoration is handled by MainLayout.
+        if (!Auth.IsRestored)
+        {
+            // Still restoring token/profile; show loading state
+            return;
+        }
+
+        if (Auth.CurrentUser is null)
+        {
+            NavigationManager.NavigateTo("/login", true);
+            return;
+        }
+
+        if (_loaded) return;
+        _loaded = true;
+
+        var client = HttpFactory.CreateClient("apiservice");
+        try
+        {
+            isLoading = true;
+            events = (await client.GetFromJsonAsync<List<CampusEventManager.Web.Models.EventDto>>("/api/events")) ?? new List<CampusEventManager.Web.Models.EventDto>();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+}

@@ -1,0 +1,154 @@
+@page "/events/{id:int}"
+@using System.Text.Json
+@inject IHttpClientFactory HttpFactory
+@inject CampusEventManager.Web.Services.AuthService Auth
+@inject NavigationManager NavigationManager
+
+@code {
+    [Parameter]
+    public int id { get; set; }
+
+    private CampusEventManager.Web.Models.EventDto? ev;
+    private string? error;
+    private bool isLoading = true;
+
+    // Registration UI state
+    private bool isRegistering = false;
+    private string? registrationMessage;
+    private string registrationCss = "alert-info";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        // Wait until Auth restoration is complete (performed in MainLayout.OnAfterRenderAsync)
+        if (!Auth.IsRestored)
+        {
+            return;
+        }
+
+        if (Auth.CurrentUser is null)
+        {
+            NavigationManager.NavigateTo("/login", true);
+            return;
+        }
+
+        var client = HttpFactory.CreateClient("apiservice");
+        try
+        {
+            isLoading = true;
+            ev = await client.GetFromJsonAsync<CampusEventManager.Web.Models.EventDto>($"/api/events/{id}");
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task RegisterAttendee()
+    {
+        await Register(role: 0);
+    }
+
+    private async Task RegisterVolunteer()
+    {
+        await Register(role: 1);
+    }
+
+    private async Task Register(int role)
+    {
+        if (ev is null) return;
+        registrationMessage = null;
+        isRegistering = true;
+        try
+        {
+            var client = HttpFactory.CreateClient("registration");
+            var payload = new { EventId = ev.Id, Role = role };
+            var resp = await client.PostAsJsonAsync("/api/registrations", payload);
+            if (resp.IsSuccessStatusCode)
+            {
+                registrationMessage = "Registration successful.";
+                registrationCss = "alert-success";
+            }
+            else if (resp.StatusCode == System.Net.HttpStatusCode.Conflict)
+            {
+                registrationMessage = "You are already registered for this event.";
+                registrationCss = "alert-warning";
+            }
+            else if (resp.StatusCode == System.Net.HttpStatusCode.BadRequest)
+            {
+                var body = await resp.Content.ReadFromJsonAsync<JsonDocument?>();
+                if (body != null && body.RootElement.TryGetProperty("error", out var err))
+                {
+                    registrationMessage = err.GetString();
+                }
+                else
+                {
+                    registrationMessage = "Registration failed: bad request.";
+                }
+                registrationCss = "alert-danger";
+            }
+            else if (resp.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+            {
+                registrationMessage = "You must be signed in to register.";
+                registrationCss = "alert-danger";
+            }
+            else
+            {
+                registrationMessage = $"Registration failed: {resp.StatusCode}";
+                registrationCss = "alert-danger";
+            }
+        }
+        catch (Exception ex)
+        {
+            registrationMessage = ex.Message;
+            registrationCss = "alert-danger";
+        }
+        finally
+        {
+            isRegistering = false;
+        }
+    }
+}
+
+<PageTitle>Event Details</PageTitle>
+
+@if (isLoading)
+{
+    <p>Loading...</p>
+}
+else if (error is not null)
+{
+    <div class="alert alert-danger">@error</div>
+}
+else if (ev is null)
+{
+    <p>Event not found.</p>
+}
+else
+{
+    <h3>@ev.Title</h3>
+    <p>@ev.Description</p>
+    <p><strong>When:</strong> @ev.StartDateTime.ToLocalTime() - @ev.EndDateTime.ToLocalTime()</p>
+    <p><strong>Where:</strong> @(ev.IsVirtual ? ev.MeetingUrl : ev.Location)</p>
+    <p><strong>Capacity:</strong> @(ev.Capacity?.ToString() ?? "No limit")</p>
+
+    @if (Auth.CurrentUser is null)
+    {
+        <p><em>Sign in to register</em></p>
+    }
+    else
+    {
+        <div class="mb-2">
+            <button class="btn btn-primary" @onclick="RegisterAttendee" disabled="@isRegistering">@((isRegistering) ? "Registering..." : "Register as Attendee")</button>
+            <button class="btn btn-secondary ms-2" @onclick="RegisterVolunteer" disabled="@isRegistering">@((isRegistering) ? "Registering..." : "Register as Volunteer")</button>
+        </div>
+
+        @if (registrationMessage is not null)
+        {
+            <div class="alert @registrationCss">@registrationMessage</div>
+        }
+    }
+}

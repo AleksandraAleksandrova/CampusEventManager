@@ -43,5 +43,4 @@ builder.AddProject<Projects.CampusEventManager_Web>("webfrontend")
     .WithHttpHealthCheck("/health")
     .WithReference(apiService)
     .WaitFor(apiService);
-
 builder.Build().Run();

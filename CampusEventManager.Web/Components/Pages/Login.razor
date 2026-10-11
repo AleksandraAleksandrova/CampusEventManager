@@ -1,0 +1,77 @@
+@page "/login"
+@layout CampusEventManager.Web.Components.Layout.PublicLayout
+@inject CampusEventManager.Web.Services.AuthService Auth
+@inject NavigationManager NavigationManager
+@using System.ComponentModel.DataAnnotations
+
+<PageTitle>Login</PageTitle>
+
+<h3>Login</h3>
+
+@if (message is not null)
+{
+    <div class="alert alert-danger">@message</div>
+}
+
+@code {
+    private EditContext? _editContext;
+    private bool _isSubmitting = false;
+}
+
+<EditForm EditContext="_editContext" FormName="login-form">
+    <DataAnnotationsValidator />
+    <div class="mb-3">
+        <label class="form-label">Email</label>
+        <InputText class="form-control" @bind-Value="loginModel.Email" />
+    </div>
+    <div class="mb-3">
+        <label class="form-label">Password</label>
+        <InputText class="form-control" type="password" @bind-Value="loginModel.Password" />
+    </div>
+    <button class="btn btn-primary" type="button" @onclick="HandleLogin" disabled="@_isSubmitting">@(_isSubmitting ? "Signing in..." : "Login")</button>
+</EditForm>
+
+@code {
+    private LoginModel loginModel = new();
+    private string? message;
+
+    private async Task HandleLogin()
+    {
+        message = null;
+        _isSubmitting = true;
+        try
+        {
+            var ok = await Auth.LoginAsync(loginModel.Email, loginModel.Password);
+            if (!ok)
+            {
+                message = "Invalid credentials or server error.";
+            }
+            else
+            {
+                // After login navigate to events
+                NavigationManager.NavigateTo("/events");
+            }
+        }
+        catch (Exception ex)
+        {
+            message = ex.Message;
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+
+    protected override void OnInitialized()
+    {
+        base.OnInitialized();
+    }
+
+    public class LoginModel
+    {
+        [Required]
+        public string Email { get; set; } = string.Empty;
+        [Required]
+        public string Password { get; set; } = string.Empty;
+    }
+}

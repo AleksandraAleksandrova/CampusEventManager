@@ -1,0 +1,22 @@
+@inject CampusEventManager.Web.Services.AuthService Auth
+@inject NavigationManager Nav
+
+@code {
+    private bool _started = false;
+
+    [Parameter]
+    public EventCallback OnRestored { get; set; }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && !_started)
+        {
+            _started = true;
+            var restored = await Auth.TryRestoreAsync();
+            if (restored.HasValue)
+            {
+                await OnRestored.InvokeAsync();
+            }
+        }
+    }
+}

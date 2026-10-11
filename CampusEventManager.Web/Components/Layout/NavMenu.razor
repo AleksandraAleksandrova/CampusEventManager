@@ -7,23 +7,41 @@
 <input type="checkbox" title="Navigation menu" class="navbar-toggler" />
 
 <div class="nav-scrollable" onclick="document.querySelector('.navbar-toggler').click()">
+    @inject CampusEventManager.Web.Services.AuthService AuthServiceInstance
     <nav class="nav flex-column">
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
-                <span class="bi bi-house-door-fill" aria-hidden="true"></span> Home
-            </NavLink>
-        </div>
-
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="counter">
-                <span class="bi bi-plus-square-fill" aria-hidden="true"></span> Counter
-            </NavLink>
-        </div>
-
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="weather">
-                <span class="bi bi-list-nested" aria-hidden="true"></span> Weather
-            </NavLink>
-        </div>
+        @if (AuthServiceInstance?.CurrentUser is null)
+        {
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="login">
+                    <span class="bi bi-box-arrow-in-right" aria-hidden="true"></span> Login / Register
+                </NavLink>
+            </div>
+        }
+        else
+        {
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="events">
+                    <span class="bi bi-calendar-event" aria-hidden="true"></span> Events
+                </NavLink>
+            </div>
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="/my-registrations">
+                    <span class="bi bi-person-check" aria-hidden="true"></span> My Registrations
+                </NavLink>
+            </div>
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="/notifications">
+                    <span class="bi bi-bell" aria-hidden="true"></span> Notifications
+                </NavLink>
+            </div>
+            @if (AuthServiceInstance.CurrentUser?.CanCreateEvents == true)
+            {
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="/manage-events">
+                        <span class="bi bi-gear" aria-hidden="true"></span> Manage Events
+                    </NavLink>
+                </div>
+            }
+        }
     </nav>
 </div>

@@ -1,0 +1,74 @@
+@page "/register"
+@layout CampusEventManager.Web.Components.Layout.PublicLayout
+@inject CampusEventManager.Web.Services.AuthService Auth
+@inject IHttpClientFactory HttpFactory
+@inject NavigationManager NavigationManager
+
+<PageTitle>Register</PageTitle>
+
+<h3>Register</h3>
+
+@if (message is not null)
+{
+    <div class="alert @messageCss">@message</div>
+}
+
+<EditForm Model="model" OnValidSubmit="HandleRegister" FormName="register-form">
+    <DataAnnotationsValidator />
+    <div class="mb-3">
+        <label class="form-label">Display Name</label>
+        <InputText class="form-control" @bind-Value="model.DisplayName" />
+    </div>
+    <div class="mb-3">
+        <label class="form-label">Email</label>
+        <InputText class="form-control" @bind-Value="model.Email" />
+    </div>
+    <div class="mb-3">
+        <label class="form-label">Password</label>
+        <InputText class="form-control" type="password" @bind-Value="model.Password" />
+    </div>
+    <button class="btn btn-primary">Register</button>
+</EditForm>
+
+@code {
+    private RegisterModel model = new();
+    private string? message;
+    private string messageCss = "alert-info";
+
+    private async Task HandleRegister()
+    {
+        var client = HttpFactory.CreateClient("registration");
+        var resp = await client.PostAsJsonAsync("/api/auth/register", model);
+        if (resp.IsSuccessStatusCode)
+        {
+            // On successful registration, login automatically and navigate to events
+            var loginOk = await Auth.LoginAsync(model.Email, model.Password);
+            if (loginOk)
+            {
+                NavigationManager.NavigateTo("/events");
+                return;
+            }
+
+            message = "Registration successful. Please log in.";
+            messageCss = "alert-success";
+            NavigationManager.NavigateTo("/login");
+        }
+        else if (resp.StatusCode == System.Net.HttpStatusCode.Conflict)
+        {
+            message = "Email already registered.";
+            messageCss = "alert-warning";
+        }
+        else
+        {
+            message = $"Registration failed: {resp.StatusCode}";
+            messageCss = "alert-danger";
+        }
+    }
+
+    private class RegisterModel
+    {
+        public string DisplayName { get; set; } = string.Empty;
+        public string Email { get; set; } = string.Empty;
+        public string Password { get; set; } = string.Empty;
+    }
+}

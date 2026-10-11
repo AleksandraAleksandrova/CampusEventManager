@@ -12,12 +12,18 @@ builder.Services.AddRazorComponents()
 
 builder.Services.AddOutputCache();
 
-builder.Services.AddHttpClient<WeatherApiClient>(client =>
-    {
-        // This URL uses "https+http://" to indicate HTTPS is preferred over HTTP.
-        // Learn more about service discovery scheme resolution at https://aka.ms/dotnet/sdschemes.
-        client.BaseAddress = new("https+http://apiservice");
-    });
+// Removed example WeatherApiClient registration (not used in this project)
+
+// Registration and notification clients
+builder.Services.AddScoped<CampusEventManager.Web.Services.AuthService>();
+builder.Services.AddScoped<CampusEventManager.Web.Services.TokenStorage>();
+
+// Register auth header handler and add it to registration and notification clients.
+builder.Services.AddTransient<CampusEventManager.Web.Services.AuthHeaderHandler>();
+builder.Services.AddHttpClient("registration", client => client.BaseAddress = new Uri("https+http://registrationservice"))
+    .AddHttpMessageHandler<CampusEventManager.Web.Services.AuthHeaderHandler>();
+builder.Services.AddHttpClient("notification", client => client.BaseAddress = new Uri("https+http://notificationservice"))
+    .AddHttpMessageHandler<CampusEventManager.Web.Services.AuthHeaderHandler>();
 
 var app = builder.Build();
 

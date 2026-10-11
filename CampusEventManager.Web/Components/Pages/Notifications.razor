@@ -1,0 +1,135 @@
+@page "/notifications"
+@inject IHttpClientFactory HttpFactory
+@inject CampusEventManager.Web.Services.AuthService Auth
+@inject NavigationManager NavigationManager
+
+<PageTitle>Notifications</PageTitle>
+
+@if (Auth.CurrentUser is null)
+{
+    <p>Please <NavLink href="/login">sign in</NavLink> to view notifications.</p>
+}
+else if (isLoading)
+{
+    <p>Loading...</p>
+}
+else if (error is not null)
+{
+    <div class="alert alert-danger">@error</div>
+}
+else if (!notes.Any())
+{
+    <p>No notifications.</p>
+}
+else
+{
+    <ul class="list-group">
+        @foreach (var n in notes)
+        {
+            <li class="list-group-item d-flex justify-content-between align-items-start">
+                <div>
+                    <div><strong>@n.Type</strong></div>
+                    <div>@n.Message</div>
+                    <small class="text-muted">@n.CreatedAt.ToLocalTime().ToString("g")</small>
+                </div>
+                <div>
+                    @if (!n.IsRead)
+                    {
+                        <button class="btn btn-sm btn-primary" @onclick="() => MarkRead(n)">Mark read</button>
+                    }
+                </div>
+            </li>
+        }
+    </ul>
+}
+
+@code {
+    private bool isLoading = true;
+    private string? error;
+    private List<NotificationItem> notes = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Auth.IsRestored)
+        {
+            return;
+        }
+
+        if (Auth.CurrentUser is null)
+        {
+            NavigationManager.NavigateTo("/login", true);
+            return;
+        }
+
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        isLoading = true;
+        try
+        {
+            var client = HttpFactory.CreateClient("notification");
+            var list = await client.GetFromJsonAsync<List<NotificationDto>>("/api/notifications/me");
+            if (list != null)
+            {
+                notes = list.Select(n => new NotificationItem
+                {
+                    Id = n.Id,
+                    Message = n.Message,
+                    Type = n.Type,
+                    CreatedAt = n.CreatedAt,
+                    IsRead = n.IsRead
+                }).ToList();
+            }
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task MarkRead(NotificationItem n)
+    {
+        try
+        {
+            var client = HttpFactory.CreateClient("notification");
+            var resp = await client.PostAsync($"/api/notifications/{n.Id}/read", null);
+            if (resp.IsSuccessStatusCode)
+            {
+                n.IsRead = true;
+            }
+            else
+            {
+                error = $"Failed to mark read: {resp.StatusCode}";
+            }
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private class NotificationItem
+    {
+        public int Id { get; set; }
+        public string Type { get; set; } = null!;
+        public string Message { get; set; } = null!;
+        public DateTime CreatedAt { get; set; }
+        public bool IsRead { get; set; }
+    }
+
+    private class NotificationDto
+    {
+        public int Id { get; set; }
+        public int RecipientUserId { get; set; }
+        public string Type { get; set; } = null!;
+        public string Message { get; set; } = null!;
+        public DateTime CreatedAt { get; set; }
+        public bool IsRead { get; set; }
+    }
+}
