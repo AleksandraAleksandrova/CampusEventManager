@@ -1,0 +1,102 @@
+### Registration service manual test sequence
+
+# This file contains an annotated end-to-end test sequence you can run manually.
+# When running under AppHost (Aspire) the ApiService host can be referenced as http://apiservice.
+# If running services individually, replace http://apiservice with the ApiService URL (e.g. http://localhost:5xxx).
+
+### 1) Login demo creator (created by seed when DB empty)
+POST https://localhost:7037/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "creator@example.com",
+  "password": "Creator123!"
+}
+
+# Copy the returned access_token into {{creatorToken}}
+
+### 2) Get creator profile to obtain CreatedByUserId
+GET http://localhost:5218/api/auth/me
+Authorization: Bearer <PASTE_CREATOR_TOKEN_HERE>
+
+# Copy the returned id value and paste it into the ApiService event create request below as createdByUserId (string)
+
+### 3) Create a test event via ApiService
+# If running under AppHost use the service logical name http://apiservice; otherwise replace with ApiService URL.
+POST http://apiservice/api/events
+Content-Type: application/json
+
+{
+  "title": "Demo Event for Registration",
+  "description": "Event created for registration tests",
+  "startDateTime": "2026-12-01T12:00:00Z",
+  "endDateTime": "2026-12-01T14:00:00Z",
+  "isVirtual": false,
+  "location": "Room 101",
+  "capacity": 2,
+  "createdByUserId": "<PASTE_CREATOR_ID_HERE>"
+}
+
+# Copy the returned event id value and paste it where indicated in the registration requests below
+
+### 4) Login demo ordinary user
+POST http://localhost:5218/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "password": "User123!"
+}
+
+# Copy access_token value and paste into Authorization headers below as: Bearer <token>
+
+### 5) Register ordinary user as Attendee
+POST http://localhost:5218/api/registrations
+Authorization: Bearer <PASTE_USER_TOKEN_HERE>
+Content-Type: application/json
+
+{
+  "eventId": <PASTE_EVENT_ID_HERE>,
+  "role": "Attendee"
+}
+
+# Expected: 201 Created on success. 400 if event not published or capacity reached. 409 if duplicate.
+
+### 6) Attempt duplicate registration (should return 409 Conflict)
+POST http://localhost:5218/api/registrations
+Authorization: Bearer <PASTE_USER_TOKEN_HERE>
+Content-Type: application/json
+
+{
+  "eventId": <PASTE_EVENT_ID_HERE>,
+  "role": "Attendee"
+}
+
+### 7) List my registrations
+GET http://localhost:5218/api/registrations/me
+Authorization: Bearer <PASTE_USER_TOKEN_HERE>
+
+### 8) Cancel registration (use id from previous list)
+DELETE http://localhost:5218/api/registrations/<PASTE_REGISTRATION_ID_HERE>
+Authorization: Bearer <PASTE_USER_TOKEN_HERE>
+
+### 9) Ordinary user attempts to become organizer (should return 403)
+POST http://localhost:5218/api/registrations/<PASTE_EVENT_ID_HERE>/become-organizer
+Authorization: Bearer <PASTE_USER_TOKEN_HERE>
+
+### 10) Creator becomes organizer
+POST http://localhost:5218/api/registrations/<PASTE_EVENT_ID_HERE>/become-organizer
+Authorization: Bearer <PASTE_CREATOR_TOKEN_HERE>
+
+# Notes and tips
+# - Replace hostnames when not running under AppHost. The registration service default local URL (when run alone) is http://localhost:5218 from launchSettings.
+# - Obtain tokens by calling /api/auth/login and copy the access_token value into the Authorization header as: Bearer <token>
+# - Expected status codes:
+#   200 OK for successful logins and profile retrieval
+#   201 Created for successful registrations and organizer assignment
+#   204 No Content for successful cancellation
+#   400 Bad Request for invalid event state or capacity reached
+#   403 Forbidden for unauthorized organizer assignment or cancellation of others' registrations
+#   404 Not Found for missing event or registration
+#   409 Conflict for duplicate registration
+

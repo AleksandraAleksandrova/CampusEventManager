@@ -12,6 +12,9 @@
 *.db-wal
 *.sqlite
 *.sqlite3
+registrations.db
+registrations.db-shm
+registrations.db-wal
 
 # User-specific files
 *.rsuser

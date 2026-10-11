@@ -1,4 +1,4 @@
-<Project Sdk="Aspire.AppHost.Sdk/13.1.0">
+﻿<Project Sdk="Aspire.AppHost.Sdk/13.1.0">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -11,6 +11,8 @@
   <ItemGroup>
     <ProjectReference Include="..\CampusEventManager.ApiService\CampusEventManager.ApiService.csproj" />
     <ProjectReference Include="..\CampusEventManager.Web\CampusEventManager.Web.csproj" />
+    <ProjectReference Include="..\NotificationService\NotificationService.csproj" />
+    <ProjectReference Include="..\RegistrationService\RegistrationService.csproj" />
   </ItemGroup>
 
 </Project>
