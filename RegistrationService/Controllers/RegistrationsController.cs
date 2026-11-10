@@ -15,6 +15,7 @@ public class RegistrationsController : ControllerBase
     private readonly IHttpClientFactory _httpFactory;
     private static readonly JsonSerializerOptions _enumOpts = new()
     {
+        PropertyNameCaseInsensitive = true,
         Converters = { new JsonStringEnumConverter() }
     };
 

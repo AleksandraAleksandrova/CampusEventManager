@@ -5,76 +5,120 @@ namespace CampusEventManager.ApiService.Data;
 
 public static class EventSeed
 {
-    // Seeds demo events only when the events table is empty.
-    // creatorUserId must match the seeded creator user's ID in RegistrationService (always 1 for the first seeded user).
+    // Seeds demo events idempotently by title — skips any title that already exists.
+    // Does NOT clear or overwrite manually created events.
     public static void EnsureSeeded(EventDbContext db)
     {
-        if (db.Events.Any()) return;
-
         const string creatorId = "1"; // Demo Creator seeded by RegistrationService
         var now = DateTime.UtcNow;
 
-        var events = new[]
+        var seeds = new[]
         {
-            // Past event 1 — Published, ended → Complete button visible
+            // 1. Past ~5 days — Published, physical, has capacity
             new Event
             {
-                Title = "Introduction to Cloud Computing",
-                Description = "A hands-on workshop covering the fundamentals of cloud infrastructure, IaaS, PaaS and SaaS with live demos on AWS.",
-                StartDateTime = now.AddDays(-10).Date.AddHours(10),
-                EndDateTime   = now.AddDays(-10).Date.AddHours(12),
-                IsVirtual = true,
-                MeetingUrl = "https://meet.example.com/cloud-intro",
-                Capacity = 60,
+                Title = "Introduction to Git & GitHub Workshop",
+                Description = "A practical workshop covering Git fundamentals: branching, merging, pull requests and collaborative workflows on GitHub. Bring your laptop.",
+                StartDateTime = now.AddDays(-5).Date.AddHours(14),
+                EndDateTime   = now.AddDays(-5).Date.AddHours(17),
+                IsVirtual = false,
+                Location = "Lab 301, Computer Science Building",
+                Capacity = 40,
                 Status = EventStatus.Published,
                 CreatedByUserId = creatorId,
                 CreatedAt = now.AddDays(-20)
             },
-            // Past event 2 — Published, ended → Complete button visible
+            // 2. Past ~2 days — Published, physical, no capacity limit
             new Event
             {
-                Title = "Career Fair — Spring 2025",
-                Description = "Meet recruiters from over 30 companies. Bring your CV and dress professionally. Open to all students.",
-                StartDateTime = now.AddDays(-3).Date.AddHours(9),
-                EndDateTime   = now.AddDays(-3).Date.AddHours(17),
+                Title = "Campus Game Night",
+                Description = "An evening of board games, card games and video games open to all students. Snacks provided. No registration required — just show up!",
+                StartDateTime = now.AddDays(-2).Date.AddHours(18),
+                EndDateTime   = now.AddDays(-2).Date.AddHours(22),
+                IsVirtual = false,
+                Location = "Student Union, Room 105",
+                Capacity = null,
+                Status = EventStatus.Published,
+                CreatedByUserId = creatorId,
+                CreatedAt = now.AddDays(-10)
+            },
+            // 3. Future ~5 days — Published, physical, has capacity
+            new Event
+            {
+                Title = "AI & Software Engineering Meetup",
+                Description = "Join fellow students and industry guests for talks on applying AI tools in modern software development. Lightning talks, demos and open discussion.",
+                StartDateTime = now.AddDays(5).Date.AddHours(17),
+                EndDateTime   = now.AddDays(5).Date.AddHours(20),
+                IsVirtual = false,
+                Location = "Auditorium B, Engineering Faculty",
+                Capacity = 120,
+                Status = EventStatus.Published,
+                CreatedByUserId = creatorId,
+                CreatedAt = now.AddDays(-3)
+            },
+            // 4. Future ~8 days — Published, virtual
+            new Event
+            {
+                Title = "Online .NET Aspire Workshop",
+                Description = "A hands-on online session exploring .NET Aspire: service orchestration, service discovery, health checks and the developer dashboard. Prerequisites: basic C# knowledge.",
+                StartDateTime = now.AddDays(8).Date.AddHours(10),
+                EndDateTime   = now.AddDays(8).Date.AddHours(13),
+                IsVirtual = true,
+                MeetingUrl = "https://meet.example.com/dotnet-aspire-workshop",
+                Capacity = 80,
+                Status = EventStatus.Published,
+                CreatedByUserId = creatorId,
+                CreatedAt = now.AddDays(-2)
+            },
+            // 5. Future ~12 days — Published, physical, no capacity limit
+            new Event
+            {
+                Title = "Student Career Networking",
+                Description = "Connect with alumni and industry professionals from the tech sector. Bring business cards or a QR code linking to your LinkedIn profile. Open to all years.",
+                StartDateTime = now.AddDays(12).Date.AddHours(16),
+                EndDateTime   = now.AddDays(12).Date.AddHours(19),
                 IsVirtual = false,
                 Location = "Main Hall, Building A",
-                Capacity = 300,
+                Capacity = null,
                 Status = EventStatus.Published,
                 CreatedByUserId = creatorId,
-                CreatedAt = now.AddDays(-14)
+                CreatedAt = now.AddDays(-1)
             },
-            // Future event — Published, not ended → Complete button NOT visible
+            // 6. Future — Cancelled, physical
             new Event
             {
-                Title = "Web Development Bootcamp",
-                Description = "A two-day intensive bootcamp covering HTML, CSS, JavaScript and React. No prior experience required.",
-                StartDateTime = now.AddDays(7).Date.AddHours(9),
-                EndDateTime   = now.AddDays(8).Date.AddHours(17),
+                Title = "Student Hackathon",
+                Description = "48-hour hackathon for student teams. Unfortunately this event has been cancelled due to insufficient venue availability during the exam period. We apologise for the inconvenience and plan to reschedule for next semester.",
+                StartDateTime = now.AddDays(20).Date.AddHours(9),
+                EndDateTime   = now.AddDays(22).Date.AddHours(9),
                 IsVirtual = false,
-                Location = "Lab 204, Engineering Building",
-                Capacity = 30,
-                Status = EventStatus.Published,
+                Location = "Innovation Hub, Technology Park",
+                Capacity = 100,
+                Status = EventStatus.Cancelled,
                 CreatedByUserId = creatorId,
-                CreatedAt = now.AddDays(-5)
+                CreatedAt = now.AddDays(-7)
             },
-            // Already completed event — demonstrates final state
+            // 7. Past ~10 days — Completed, physical
             new Event
             {
-                Title = "Orientation Day — New Students",
-                Description = "Welcome session for all new students. Campus tour, introduction to student services and Q&A with faculty.",
-                StartDateTime = now.AddDays(-30).Date.AddHours(10),
-                EndDateTime   = now.AddDays(-30).Date.AddHours(14),
+                Title = "Introduction to UX Design",
+                Description = "An introductory session on user experience design principles: user research, wireframing, prototyping and usability testing. Hosted by the Design Society.",
+                StartDateTime = now.AddDays(-10).Date.AddHours(13),
+                EndDateTime   = now.AddDays(-10).Date.AddHours(16),
                 IsVirtual = false,
-                Location = "Auditorium, Main Campus",
-                Capacity = 200,
+                Location = "Design Studio, Arts Building",
+                Capacity = 50,
                 Status = EventStatus.Completed,
                 CreatedByUserId = creatorId,
-                CreatedAt = now.AddDays(-45)
+                CreatedAt = now.AddDays(-25)
             }
         };
 
-        db.Events.AddRange(events);
+        var existingTitles = db.Events.Select(e => e.Title).ToHashSet();
+        var toAdd = seeds.Where(s => !existingTitles.Contains(s.Title)).ToList();
+        if (toAdd.Count == 0) return;
+
+        db.Events.AddRange(toAdd);
         db.SaveChanges();
     }
 }
