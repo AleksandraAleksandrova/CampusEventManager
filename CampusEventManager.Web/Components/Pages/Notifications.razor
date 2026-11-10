@@ -1,17 +1,22 @@
 @page "/notifications"
-@inject IHttpClientFactory HttpFactory
+@rendermode InteractiveServer
 @inject CampusEventManager.Web.Services.AuthService Auth
 @inject NavigationManager NavigationManager
+@implements IDisposable
 
-<PageTitle>Notifications</PageTitle>
+<PageTitle>My Notifications</PageTitle>
 
-@if (Auth.CurrentUser is null)
+<div class="page-header">
+    <h3>My Notifications</h3>
+    @if (notes.Any(n => !n.IsRead))
+    {
+        <button class="btn btn-outline-secondary btn-sm" @onclick="MarkAllRead">Mark all read</button>
+    }
+</div>
+
+@if (isLoading)
 {
-    <p>Please <NavLink href="/login">sign in</NavLink> to view notifications.</p>
-}
-else if (isLoading)
-{
-    <p>Loading...</p>
+    <p class="text-muted">Loading...</p>
 }
 else if (error is not null)
 {
@@ -19,114 +24,100 @@ else if (error is not null)
 }
 else if (!notes.Any())
 {
-    <p>No notifications.</p>
+    <div class="alert alert-info">You have no notifications yet.</div>
 }
 else
 {
-    <ul class="list-group">
+    <div class="list-group">
         @foreach (var n in notes)
         {
-            <li class="list-group-item d-flex justify-content-between align-items-start">
-                <div>
-                    <div><strong>@n.Type</strong></div>
-                    <div>@n.Message</div>
-                    <small class="text-muted">@n.CreatedAt.ToLocalTime().ToString("g")</small>
-                </div>
-                <div>
+            <div class="list-group-item @(n.IsRead ? "" : "fw-bold")">
+                <div class="d-flex justify-content-between align-items-start">
+                    <div style="flex:1;min-width:0">
+                        <div style="font-size:.9rem;font-weight:@(n.IsRead ? "400" : "600")">@n.Type</div>
+                        <div class="text-muted" style="font-size:.85rem;margin-top:.15rem">@n.Message</div>
+                        <small class="text-muted">@n.CreatedAt.ToLocalTime().ToString("g")</small>
+                    </div>
                     @if (!n.IsRead)
                     {
-                        <button class="btn btn-sm btn-primary" @onclick="() => MarkRead(n)">Mark read</button>
+                        <button class="btn btn-outline-primary btn-sm ms-3" style="flex-shrink:0" @onclick="() => MarkRead(n)">Mark read</button>
+                    }
+                    else
+                    {
+                        <span class="text-muted ms-3" style="font-size:.75rem;flex-shrink:0">Read</span>
                     }
                 </div>
-            </li>
+            </div>
         }
-    </ul>
+    </div>
 }
 
 @code {
     private bool isLoading = true;
     private string? error;
     private List<NotificationItem> notes = new();
+    private bool _loaded;
 
-    protected override async Task OnInitializedAsync()
+    protected override void OnInitialized() => Auth.OnChange += OnAuthChanged;
+    private void OnAuthChanged() => InvokeAsync(TryLoad);
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (!Auth.IsRestored)
-        {
-            return;
-        }
-
-        if (Auth.CurrentUser is null)
-        {
-            NavigationManager.NavigateTo("/login", true);
-            return;
-        }
-
-        await Load();
+        if (firstRender) await TryLoad();
     }
 
-    private async Task Load()
+    private async Task TryLoad()
     {
-        isLoading = true;
+        if (!Auth.IsRestored) return;
+        if (Auth.CurrentUser is null) { NavigationManager.NavigateTo("/login", true); return; }
+        if (_loaded) return;
+        _loaded = true;
         try
         {
-            var client = HttpFactory.CreateClient("notification");
-            var list = await client.GetFromJsonAsync<List<NotificationDto>>("/api/notifications/me");
-            if (list != null)
-            {
-                notes = list.Select(n => new NotificationItem
-                {
-                    Id = n.Id,
-                    Message = n.Message,
-                    Type = n.Type,
-                    CreatedAt = n.CreatedAt,
-                    IsRead = n.IsRead
-                }).ToList();
-            }
+            var client = Auth.CreateAuthorizedClient("notification");
+            var list = await client.GetFromJsonAsync<List<NotificationItem>>("/api/notifications/me");
+            notes = list ?? new();
+            Auth.NotifyUnreadCount(notes.Count(n => !n.IsRead));
         }
-        catch (Exception ex)
-        {
-            error = ex.Message;
-        }
-        finally
-        {
-            isLoading = false;
-        }
+        catch (Exception ex) { error = ex.Message; }
+        finally { isLoading = false; await InvokeAsync(StateHasChanged); }
     }
+
+    public void Dispose() => Auth.OnChange -= OnAuthChanged;
 
     private async Task MarkRead(NotificationItem n)
     {
         try
         {
-            var client = HttpFactory.CreateClient("notification");
+            var client = Auth.CreateAuthorizedClient("notification");
             var resp = await client.PostAsync($"/api/notifications/{n.Id}/read", null);
             if (resp.IsSuccessStatusCode)
             {
                 n.IsRead = true;
+                Auth.NotifyUnreadCount(notes.Count(x => !x.IsRead));
             }
-            else
-            {
-                error = $"Failed to mark read: {resp.StatusCode}";
-            }
+            else error = $"Failed to mark read: {resp.StatusCode}";
         }
-        catch (Exception ex)
+        catch (Exception ex) { error = ex.Message; }
+        finally { StateHasChanged(); }
+    }
+
+    private async Task MarkAllRead()
+    {
+        var unread = notes.Where(n => !n.IsRead).ToList();
+        var client = Auth.CreateAuthorizedClient("notification");
+        foreach (var n in unread)
         {
-            error = ex.Message;
+            try { await client.PostAsync($"/api/notifications/{n.Id}/read", null); n.IsRead = true; }
+            catch { }
         }
+        Auth.NotifyUnreadCount(0);
+        StateHasChanged();
     }
 
     private class NotificationItem
     {
         public int Id { get; set; }
-        public string Type { get; set; } = null!;
-        public string Message { get; set; } = null!;
-        public DateTime CreatedAt { get; set; }
-        public bool IsRead { get; set; }
-    }
-
-    private class NotificationDto
-    {
-        public int Id { get; set; }
-        public int RecipientUserId { get; set; }
         public string Type { get; set; } = null!;
         public string Message { get; set; } = null!;
         public DateTime CreatedAt { get; set; }

@@ -1,80 +1,152 @@
 @page "/events"
-@inject IHttpClientFactory HttpFactory
+@rendermode InteractiveServer
 @inject CampusEventManager.Web.Services.AuthService Auth
 @inject NavigationManager NavigationManager
+@implements IDisposable
 
 <PageTitle>Events</PageTitle>
 
-<h3>Published Events</h3>
+<div class="page-header">
+    <h3>Events</h3>
+</div>
+
+<div class="filters-bar">
+    <div>
+        <label class="form-label">From</label>
+        <input type="date" class="form-control" @bind="_filterFrom" @bind:event="oninput" />
+    </div>
+    <div>
+        <label class="form-label">To</label>
+        <input type="date" class="form-control" @bind="_filterTo" @bind:event="oninput" />
+    </div>
+    <div>
+        <label class="form-label">Type</label>
+        <select class="form-select" @bind="_filterVirtual">
+            <option value="">All</option>
+            <option value="virtual">Virtual</option>
+            <option value="physical">Physical</option>
+        </select>
+    </div>
+    <div>
+        <label class="form-label">Location</label>
+        <input type="text" class="form-control" placeholder="Search location…" @bind="_filterLocation" @bind:event="oninput" />
+    </div>
+    <div style="align-self:flex-end">
+        <button class="btn btn-outline-secondary btn-sm" @onclick="ResetFilters">Reset</button>
+    </div>
+</div>
 
 @if (isLoading)
 {
-    <p>Loading...</p>
+    <p class="text-muted">Loading...</p>
 }
 else if (error is not null)
 {
     <div class="alert alert-danger">@error</div>
 }
-else if (!events.Any())
+else if (!Filtered.Any())
 {
-    <p>No published events available.</p>
+    <div class="alert alert-info">No events match your filters.</div>
 }
 else
 {
-    <div class="list-group">
-        @foreach (var ev in events)
-        {
-            <a class="list-group-item list-group-item-action" href="/events/@ev.Id"> 
-                <div class="d-flex w-100 justify-content-between">
-                    <h5 class="mb-1">@ev.Title</h5>
-                    <small>@ev.StartDateTime.ToLocalTime().ToString("g")</small>
+    @foreach (var ev in Filtered)
+    {
+        <a class="event-card" style="text-decoration:none;color:inherit" href="/events/@ev.Id">
+            <div class="event-card-body">
+                <div class="d-flex align-items-center gap-2 mb-1">
+                    <span class="event-card-title">@ev.Title</span>
+                    <span class="badge badge-published">Published</span>
+                    @if (ev.IsVirtual)
+                    {
+                        <span class="badge" style="background:#f0f9ff;color:#0369a1">Virtual</span>
+                    }
                 </div>
-                <p class="mb-1">@ev.Description</p>
-                <small>@(ev.IsVirtual ? ev.MeetingUrl : ev.Location) @if(ev.Capacity.HasValue){<text> · Capacity: @ev.Capacity</text>}</small>
-            </a>
-        }
-    </div>
+                @if (!string.IsNullOrEmpty(ev.Description))
+                {
+                    <p class="event-card-desc mb-1">@ev.Description</p>
+                }
+                <div class="event-card-meta">
+                    📅 @ev.StartDateTime.ToLocalTime().ToString("g")
+                    @if (!ev.IsVirtual && !string.IsNullOrEmpty(ev.Location))
+                    {
+                        <text> · 📍 @ev.Location</text>
+                    }
+                    @if (ev.Capacity.HasValue)
+                    {
+                        <text> · 👥 Capacity: @ev.Capacity</text>
+                    }
+                </div>
+            </div>
+            <div style="align-self:center;color:var(--text-muted);font-size:1.2rem">›</div>
+        </a>
+    }
 }
 
 @code {
     private bool isLoading = true;
     private string? error;
-    private List<CampusEventManager.Web.Models.EventDto> events = new();
-    private bool _loaded = false;
+    private List<EventDto> _allEvents = new();
+    private bool _loaded;
+
+    private DateTime? _filterFrom;
+    private DateTime? _filterTo;
+    private string _filterVirtual = "";
+    private string _filterLocation = "";
+
+    private IEnumerable<EventDto> Filtered => _allEvents.Where(ev =>
+        (_filterFrom is null || ev.StartDateTime.ToLocalTime().Date >= _filterFrom.Value.Date) &&
+        (_filterTo is null || ev.StartDateTime.ToLocalTime().Date <= _filterTo.Value.Date) &&
+        (_filterVirtual == "" || (_filterVirtual == "virtual" ? ev.IsVirtual : !ev.IsVirtual)) &&
+        (string.IsNullOrWhiteSpace(_filterLocation) ||
+            (ev.Location ?? "").Contains(_filterLocation, StringComparison.OrdinalIgnoreCase) ||
+            (ev.MeetingUrl ?? "").Contains(_filterLocation, StringComparison.OrdinalIgnoreCase))
+    );
+
+    protected override void OnInitialized() => Auth.OnChange += OnAuthChanged;
+    private void OnAuthChanged() => InvokeAsync(TryLoad);
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        // Do not attempt JS interop here; Auth restoration is handled by MainLayout.
-        if (!Auth.IsRestored)
-        {
-            // Still restoring token/profile; show loading state
-            return;
-        }
-
-        if (Auth.CurrentUser is null)
-        {
-            NavigationManager.NavigateTo("/login", true);
-            return;
-        }
-
-        if (_loaded) return;
-        _loaded = true;
-
-        var client = HttpFactory.CreateClient("apiservice");
-        try
-        {
-            isLoading = true;
-            events = (await client.GetFromJsonAsync<List<CampusEventManager.Web.Models.EventDto>>("/api/events")) ?? new List<CampusEventManager.Web.Models.EventDto>();
-        }
-        catch (Exception ex)
-        {
-            error = ex.Message;
-        }
-        finally
-        {
-            isLoading = false;
-            StateHasChanged();
-        }
+        if (firstRender) await TryLoad();
     }
 
+    private async Task TryLoad()
+    {
+        if (!Auth.IsRestored) return;
+        if (Auth.CurrentUser is null) { NavigationManager.NavigateTo("/login", true); return; }
+        if (_loaded) return;
+        _loaded = true;
+        try
+        {
+            var client = Auth.CreateAuthorizedClient("apiservice");
+            _allEvents = await client.GetFromJsonAsync<List<EventDto>>("/api/events") ?? new();
+        }
+        catch (Exception ex) { error = ex.Message; }
+        finally { isLoading = false; await InvokeAsync(StateHasChanged); }
+    }
+
+    private void ResetFilters()
+    {
+        _filterFrom = null;
+        _filterTo = null;
+        _filterVirtual = "";
+        _filterLocation = "";
+    }
+
+    public void Dispose() => Auth.OnChange -= OnAuthChanged;
+
+    private class EventDto
+    {
+        public int Id { get; set; }
+        public string Title { get; set; } = null!;
+        public string? Description { get; set; }
+        public DateTime StartDateTime { get; set; }
+        public DateTime EndDateTime { get; set; }
+        public bool IsVirtual { get; set; }
+        public string? Location { get; set; }
+        public string? MeetingUrl { get; set; }
+        public int? Capacity { get; set; }
+        public string Status { get; set; } = null!;
+    }
 }

@@ -1,26 +1,32 @@
-﻿<div class="top-row ps-3 navbar navbar-dark">
+@inject CampusEventManager.Web.Services.AuthService AuthServiceInstance
+@inject IHttpClientFactory HttpClientFactory
+@implements IDisposable
+
+<div class="top-row ps-3 navbar navbar-dark">
     <div class="container-fluid">
-        <a class="navbar-brand" href="">CampusEventManager</a>
+        <a class="navbar-brand" href="" tabindex="-1">CampusEventManager</a>
     </div>
 </div>
 
-<input type="checkbox" title="Navigation menu" class="navbar-toggler" />
-
-<div class="nav-scrollable" onclick="document.querySelector('.navbar-toggler').click()">
-    @inject CampusEventManager.Web.Services.AuthService AuthServiceInstance
+<div class="nav-scrollable">
     <nav class="nav flex-column">
         @if (AuthServiceInstance?.CurrentUser is null)
         {
             <div class="nav-item px-3">
-                <NavLink class="nav-link" href="login">
-                    <span class="bi bi-box-arrow-in-right" aria-hidden="true"></span> Login / Register
+                <NavLink class="nav-link" href="/login">
+                    <span class="bi bi-box-arrow-in-right" aria-hidden="true"></span> Login
+                </NavLink>
+            </div>
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="/register">
+                    <span class="bi bi-person-plus" aria-hidden="true"></span> Register
                 </NavLink>
             </div>
         }
         else
         {
             <div class="nav-item px-3">
-                <NavLink class="nav-link" href="events">
+                <NavLink class="nav-link" href="/events">
                     <span class="bi bi-calendar-event" aria-hidden="true"></span> Events
                 </NavLink>
             </div>
@@ -31,17 +37,104 @@
             </div>
             <div class="nav-item px-3">
                 <NavLink class="nav-link" href="/notifications">
-                    <span class="bi bi-bell" aria-hidden="true"></span> Notifications
+                    <span class="bi bi-bell" aria-hidden="true"></span> My Notifications
+                    @if (_unreadCount > 0)
+                    {
+                        <span class="notif-badge">@(_unreadCount > 9 ? "9+" : _unreadCount.ToString())</span>
+                    }
                 </NavLink>
             </div>
-            @if (AuthServiceInstance.CurrentUser?.CanCreateEvents == true)
+            @if (AuthServiceInstance.CurrentUser.CanCreateEvents)
             {
                 <div class="nav-item px-3">
                     <NavLink class="nav-link" href="/manage-events">
-                        <span class="bi bi-gear" aria-hidden="true"></span> Manage Events
+                        <span class="bi bi-calendar-plus" aria-hidden="true"></span> My Events
                     </NavLink>
                 </div>
             }
         }
     </nav>
 </div>
+
+@code {
+    private int _unreadCount;
+    private Timer? _pollTimer;
+
+    protected override void OnInitialized()
+    {
+        AuthServiceInstance.OnChange += OnAuthChanged;
+        AuthServiceInstance.OnUnreadCountChanged += OnUnreadChanged;
+        AuthServiceInstance.OnUnreadRefreshRequested += OnRefreshRequested;
+    }
+
+    private void OnAuthChanged() => InvokeAsync(async () =>
+    {
+        if (AuthServiceInstance.CurrentUser is not null)
+        {
+            await FetchUnreadCountAsync();
+            StartPolling();
+        }
+        else
+        {
+            _unreadCount = 0;
+            StopPolling();
+        }
+        StateHasChanged();
+    });
+
+    private void OnUnreadChanged(int count)
+    {
+        _unreadCount = count;
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void OnRefreshRequested() => InvokeAsync(async () =>
+    {
+        await FetchUnreadCountAsync();
+        StateHasChanged();
+    });
+
+    private void StartPolling()
+    {
+        StopPolling();
+        // Poll every 30 seconds while authenticated
+        _pollTimer = new Timer(async _ =>
+        {
+            if (AuthServiceInstance.CurrentUser is not null)
+                await InvokeAsync(async () =>
+                {
+                    await FetchUnreadCountAsync();
+                    StateHasChanged();
+                });
+        }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+    }
+
+    private void StopPolling()
+    {
+        _pollTimer?.Dispose();
+        _pollTimer = null;
+    }
+
+    private async Task FetchUnreadCountAsync()
+    {
+        try
+        {
+            var client = AuthServiceInstance.CreateAuthorizedClient("notification");
+            var list = await client.GetFromJsonAsync<List<NotifItem>>("/api/notifications/me");
+            var count = list?.Count(n => !n.IsRead) ?? 0;
+            _unreadCount = count;
+            AuthServiceInstance.NotifyUnreadCount(count);
+        }
+        catch { }
+    }
+
+    private class NotifItem { public bool IsRead { get; set; } }
+
+    public void Dispose()
+    {
+        StopPolling();
+        AuthServiceInstance.OnChange -= OnAuthChanged;
+        AuthServiceInstance.OnUnreadCountChanged -= OnUnreadChanged;
+        AuthServiceInstance.OnUnreadRefreshRequested -= OnRefreshRequested;
+    }
+}

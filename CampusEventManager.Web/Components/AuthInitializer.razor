@@ -1,22 +1,33 @@
 @inject CampusEventManager.Web.Services.AuthService Auth
-@inject NavigationManager Nav
+@implements IDisposable
 
 @code {
-    private bool _started = false;
-
     [Parameter]
     public EventCallback OnRestored { get; set; }
 
+    protected override void OnInitialized()
+    {
+        Auth.OnChange += HandleAuthChange;
+    }
+
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (firstRender && !_started)
+        if (!firstRender) return;
+        var restored = await Auth.TryRestoreAsync();
+        if (restored.HasValue)
+            await OnRestored.InvokeAsync();
+    }
+
+    private void HandleAuthChange()
+    {
+        InvokeAsync(async () =>
         {
-            _started = true;
-            var restored = await Auth.TryRestoreAsync();
-            if (restored.HasValue)
-            {
-                await OnRestored.InvokeAsync();
-            }
-        }
+            await OnRestored.InvokeAsync();
+        });
+    }
+
+    public void Dispose()
+    {
+        Auth.OnChange -= HandleAuthChange;
     }
 }

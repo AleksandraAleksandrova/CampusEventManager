@@ -5,23 +5,52 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.AddServiceDefaults();
 
-// Add services to the container.
-
-builder.Services.AddControllers();
-// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
+builder.Services.AddControllers()
+    .AddJsonOptions(o =>
+        o.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter()));
 builder.Services.AddOpenApi();
 
-// Configure EF Core with SQLite for the registration service. Use a connection string from
-// configuration or fall back to a local file 'registrations.db'.
+// Named HTTP clients for service-to-service calls via Aspire service discovery
+builder.Services.AddHttpClient("apiservice", c => c.BaseAddress = new Uri("https+http://apiservice"));
+builder.Services.AddHttpClient("notificationservice", c => c.BaseAddress = new Uri("https+http://notificationservice"));
+
 var connection = builder.Configuration.GetConnectionString("RegistrationDatabase") ?? "Data Source=registrations.db";
 builder.Services.AddDbContext<RegistrationService.Data.RegistrationDbContext>(options =>
     options.UseSqlite(connection));
 
-// Authentication and JWT
+// JWT key: read from configuration (User Secrets / env var in production).
+// The fallback is only used in Development and is exactly 32 bytes (256 bits) to satisfy HS256.
+// In Production the key MUST be set explicitly; startup will throw if it is absent or too short.
+var jwtIssuer   = builder.Configuration["Jwt:Issuer"]   ?? "campus-event-manager";
+var jwtAudience = builder.Configuration["Jwt:Audience"] ?? "campus-event-manager";
+var jwtKeyRaw   = builder.Configuration["Jwt:Key"];
+
+if (string.IsNullOrWhiteSpace(jwtKeyRaw))
+{
+    if (!builder.Environment.IsDevelopment())
+        throw new InvalidOperationException("Jwt:Key must be configured in non-Development environments.");
+    // 32-byte (256-bit) development-only fallback — never use in production
+    jwtKeyRaw = "dev-only-key-32bytes-padding!!!!!";
+}
+
+var jwtKeyBytes = System.Text.Encoding.UTF8.GetBytes(jwtKeyRaw);
+if (jwtKeyBytes.Length < 32)
+    throw new InvalidOperationException($"Jwt:Key must be at least 32 bytes (256 bits) for HS256. Configured key is {jwtKeyBytes.Length} bytes.");
+
 builder.Services.AddAuthentication("Bearer").AddJwtBearer("Bearer", options =>
 {
-    // For now, validate issuer/audience/key from configuration.
     options.RequireHttpsMetadata = false;
+    options.TokenValidationParameters = new Microsoft.IdentityModel.Tokens.TokenValidationParameters
+    {
+        ValidateIssuer = true,
+        ValidIssuer = jwtIssuer,
+        ValidateAudience = true,
+        ValidAudience = jwtAudience,
+        ValidateIssuerSigningKey = true,
+        IssuerSigningKey = new Microsoft.IdentityModel.Tokens.SymmetricSecurityKey(jwtKeyBytes),
+        ValidateLifetime = true,
+        ClockSkew = TimeSpan.FromSeconds(30)
+    };
 });
 
 builder.Services.AddAuthorization();
@@ -29,49 +58,23 @@ builder.Services.AddAuthorization();
 // Password hasher
 builder.Services.AddScoped<IPasswordHasher<RegistrationService.Models.User>, PasswordHasher<RegistrationService.Models.User>>();
 
-// Configure JWT validation
-builder.Services.Configure<Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerOptions>("Bearer", options =>
-{
-    var issuer = builder.Configuration["Jwt:Issuer"] ?? "registration.local";
-    var audience = builder.Configuration["Jwt:Audience"] ?? "registration.local";
-    var key = builder.Configuration["Jwt:Key"] ?? "dev_signing_key_not_secure";
-
-    options.TokenValidationParameters = new Microsoft.IdentityModel.Tokens.TokenValidationParameters
-    {
-        ValidateIssuer = true,
-        ValidIssuer = issuer,
-        ValidateAudience = true,
-        ValidAudience = audience,
-        ValidateIssuerSigningKey = true,
-        IssuerSigningKey = new Microsoft.IdentityModel.Tokens.SymmetricSecurityKey(System.Text.Encoding.UTF8.GetBytes(key)),
-        ValidateLifetime = true
-    };
-});
-
 var app = builder.Build();
 
 app.MapDefaultEndpoints();
 
-// Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
-{
     app.MapOpenApi();
-}
 
 app.UseHttpsRedirection();
 
-// Ensure DB is created in development
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<RegistrationService.Data.RegistrationDbContext>();
     db.Database.EnsureCreated();
 }
 
-// Seed demo accounts in development only
 if (app.Environment.IsDevelopment())
-{
     RegistrationService.Data.DemoSeed.EnsureSeeded(app.Services);
-}
 
 app.UseAuthentication();
 app.UseAuthorization();

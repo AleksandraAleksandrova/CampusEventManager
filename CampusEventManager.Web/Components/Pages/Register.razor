@@ -1,4 +1,5 @@
 @page "/register"
+@rendermode InteractiveServer
 @layout CampusEventManager.Web.Components.Layout.PublicLayout
 @inject CampusEventManager.Web.Services.AuthService Auth
 @inject IHttpClientFactory HttpFactory
@@ -13,7 +14,7 @@
     <div class="alert @messageCss">@message</div>
 }
 
-<EditForm Model="model" OnValidSubmit="HandleRegister" FormName="register-form">
+<EditForm Model="model" OnValidSubmit="HandleRegister">
     <DataAnnotationsValidator />
     <div class="mb-3">
         <label class="form-label">Display Name</label>
@@ -27,41 +28,55 @@
         <label class="form-label">Password</label>
         <InputText class="form-control" type="password" @bind-Value="model.Password" />
     </div>
-    <button class="btn btn-primary">Register</button>
+    <button class="btn btn-primary" disabled="@_isSubmitting">@(_isSubmitting ? "Registering..." : "Register")</button>
+    <a class="btn btn-link" href="/login">Login instead</a>
 </EditForm>
 
 @code {
     private RegisterModel model = new();
     private string? message;
     private string messageCss = "alert-info";
+    private bool _isSubmitting;
 
     private async Task HandleRegister()
     {
-        var client = HttpFactory.CreateClient("registration");
-        var resp = await client.PostAsJsonAsync("/api/auth/register", model);
-        if (resp.IsSuccessStatusCode)
+        _isSubmitting = true;
+        message = null;
+        try
         {
-            // On successful registration, login automatically and navigate to events
-            var loginOk = await Auth.LoginAsync(model.Email, model.Password);
-            if (loginOk)
+            var client = HttpFactory.CreateClient("registration");
+            var resp = await client.PostAsJsonAsync("/api/auth/register", model);
+            if (resp.IsSuccessStatusCode)
             {
-                NavigationManager.NavigateTo("/events");
-                return;
+                var loginOk = await Auth.LoginAsync(model.Email, model.Password);
+                if (loginOk)
+                {
+                    NavigationManager.NavigateTo("/events");
+                    return;
+                }
+                message = "Registration successful. Please log in.";
+                messageCss = "alert-success";
+                NavigationManager.NavigateTo("/login");
             }
-
-            message = "Registration successful. Please log in.";
-            messageCss = "alert-success";
-            NavigationManager.NavigateTo("/login");
+            else if (resp.StatusCode == System.Net.HttpStatusCode.Conflict)
+            {
+                message = "Email already registered.";
+                messageCss = "alert-warning";
+            }
+            else
+            {
+                message = $"Registration failed: {resp.StatusCode}";
+                messageCss = "alert-danger";
+            }
         }
-        else if (resp.StatusCode == System.Net.HttpStatusCode.Conflict)
+        catch (Exception ex)
         {
-            message = "Email already registered.";
-            messageCss = "alert-warning";
-        }
-        else
-        {
-            message = $"Registration failed: {resp.StatusCode}";
+            message = ex.Message;
             messageCss = "alert-danger";
+        }
+        finally
+        {
+            _isSubmitting = false;
         }
     }
 

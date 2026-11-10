@@ -1,12 +1,56 @@
 @page "/manage-events"
-@inject IHttpClientFactory HttpFactory
+@rendermode InteractiveServer
 @inject CampusEventManager.Web.Services.AuthService Auth
+@inject NavigationManager NavigationManager
+@implements IDisposable
 
-<PageTitle>Manage Events</PageTitle>
+<PageTitle>My Events</PageTitle>
 
-@if (Auth.CurrentUser is null)
+@* ── Modal overlay ────────────────────────────────────────── *@
+@if (_modalMessage is not null)
 {
-    <p>Please <NavLink href="/login">sign in</NavLink> to manage events.</p>
+    <div style="position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1050;display:flex;align-items:center;justify-content:center">
+        <div class="card" style="max-width:420px;width:100%;margin:1rem">
+            <div class="card-body">
+                <h4 style="margin-bottom:.75rem">@_modalTitle</h4>
+                <p style="color:var(--text-muted);font-size:.9rem">@_modalMessage</p>
+                <div style="text-align:right;margin-top:1rem">
+                    <button class="btn btn-primary" @onclick="CloseModal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@* ── Cancel confirmation modal ────────────────────────────── *@
+@if (_confirmCancelEvent is not null)
+{
+    <div style="position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1050;display:flex;align-items:center;justify-content:center">
+        <div class="card" style="max-width:440px;width:100%;margin:1rem">
+            <div class="card-body">
+                <h4 style="margin-bottom:.75rem">Cancel event?</h4>
+                <p style="color:var(--text-muted);font-size:.9rem">
+                    Are you sure you want to cancel <strong>@_confirmCancelEvent.Title</strong>?
+                    This cannot be undone. Registered participants will be notified.
+                </p>
+                <div class="d-flex gap-2 justify-content-end mt-3">
+                    <button class="btn btn-outline-secondary" @onclick="() => _confirmCancelEvent = null">Keep event</button>
+                    <button class="btn btn-danger" @onclick="ExecuteCancel" disabled="@_saving">
+                        @(_saving ? "Cancelling…" : "Yes, cancel event")
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@if (!_ready)
+{
+    <p class="text-muted">Loading...</p>
+}
+else if (Auth.CurrentUser is null)
+{
+    <p>Please <a href="/login">sign in</a>.</p>
 }
 else if (!Auth.CurrentUser.CanCreateEvents)
 {
@@ -14,213 +58,485 @@ else if (!Auth.CurrentUser.CanCreateEvents)
 }
 else
 {
-    <h3>Your Events</h3>
-    @if (isLoading)
+    @* ── Page header ──────────────────────────────────────── *@
+    <div class="page-header">
+        <h3>My Events</h3>
+        @if (!_showCreateForm && _editingEvent is null)
+        {
+            <button class="btn btn-primary btn-sm" @onclick="() => _showCreateForm = true">+ Add new event</button>
+        }
+    </div>
+
+    @* ── Create form ──────────────────────────────────────── *@
+    @if (_showCreateForm)
     {
-        <p>Loading...</p>
-    }
-    else if (error is not null)
-    {
-        <div class="alert alert-danger">@error</div>
-    }
-    else if (!myEvents.Any())
-    {
-        <p>You have not created any events.</p>
-    }
-    else
-    {
-        <div class="list-group">
-            @foreach (var ev in myEvents)
-            {
-                <div class="list-group-item">
-                    <div class="d-flex w-100 justify-content-between">
-                        <h5 class="mb-1">@ev.Title</h5>
-                        <small>@ev.StartDateTime.ToLocalTime().ToString("g")</small>
+        <div class="card mb-4">
+            <div class="card-body">
+                <h4>New Event</h4>
+                <EditForm Model="_createModel" OnValidSubmit="CreateEvent">
+                    <DataAnnotationsValidator />
+                    @FormFields(_createModel)
+                    <div class="d-flex gap-2 mt-3">
+                        <button type="submit" class="btn btn-primary" disabled="@_saving">
+                            @(_saving ? "Creating…" : "Create Event")
+                        </button>
+                        <button type="button" class="btn btn-secondary" @onclick="CancelCreate">Cancel</button>
                     </div>
-                    <p class="mb-1">@ev.Description</p>
-                    <div>
-                        <button class="btn btn-sm btn-primary" @onclick="() => Edit(ev.Id)">Edit</button>
-                        <button class="btn btn-sm btn-warning ms-2" @onclick="() => Cancel(ev.Id)">Cancel</button>
-                        <button class="btn btn-sm btn-success ms-2" @onclick="() => MarkComplete(ev.Id)">Mark Complete</button>
+                </EditForm>
+                @if (_formMessage is not null)
+                {
+                    <div class="alert @_formCss mt-3">@_formMessage</div>
+                }
+            </div>
+        </div>
+    }
+
+    @* ── Edit form ────────────────────────────────────────── *@
+    @if (_editingEvent is not null)
+    {
+        <div class="card mb-4">
+            <div class="card-body">
+                <h4>Edit — @_editingEvent.Title</h4>
+                <EditForm Model="_editModel" OnValidSubmit="SaveEdit">
+                    <DataAnnotationsValidator />
+                    @FormFields(_editModel)
+                    <div class="d-flex gap-2 mt-3 flex-wrap">
+                        <button type="submit" class="btn btn-primary" disabled="@_saving">
+                            @(_saving ? "Saving…" : "Save Changes")
+                        </button>
+                        @if (_editingEvent is not null && _editingEvent.EndDateTime.ToUniversalTime() <= DateTime.UtcNow)
+                        {
+                            <button type="button" class="btn btn-success" @onclick="CompleteFromEdit" disabled="@_saving">
+                                Mark as Completed
+                            </button>
+                        }
+                        <button type="button" class="btn btn-outline-danger" style="margin-left:auto" @onclick="RequestCancelFromEdit" disabled="@_saving">
+                            Cancel Event
+                        </button>
+                        <button type="button" class="btn btn-secondary" @onclick="CancelEdit" disabled="@_saving">Close</button>
+                    </div>
+                </EditForm>
+                @if (_formMessage is not null)
+                {
+                    <div class="alert @_formCss mt-3">@_formMessage</div>
+                }
+            </div>
+        </div>
+    }
+
+    @* ── List (hidden while a form is open) ───────────────── *@
+    @if (!_showCreateForm && _editingEvent is null)
+    {
+        @* ── Filters ──────────────────────────────────────── *@
+        <div class="filters-bar">
+            <div>
+                <label class="form-label">Status</label>
+                <select class="form-select" @bind="_filterStatus">
+                    <option value="">All</option>
+                    <option value="Published">Published</option>
+                    <option value="Cancelled">Cancelled</option>
+                    <option value="Completed">Completed</option>
+                </select>
+            </div>
+            <div>
+                <label class="form-label">Type</label>
+                <select class="form-select" @bind="_filterVirtual">
+                    <option value="">All</option>
+                    <option value="virtual">Virtual</option>
+                    <option value="physical">Physical</option>
+                </select>
+            </div>
+            <div style="align-self:flex-end">
+                <button class="btn btn-outline-secondary btn-sm" @onclick="ResetFilters">Reset</button>
+            </div>
+        </div>
+
+        @if (_listError is not null)
+        {
+            <div class="alert alert-danger">@_listError</div>
+        }
+
+        @if (_isLoading)
+        {
+            <p class="text-muted">Loading events…</p>
+        }
+        else if (!Filtered.Any() && _listError is null)
+        {
+            <div class="alert alert-info">
+                @if (_allEvents.Any()) { <text>No events match the current filters.</text> }
+                else { <text>You have not created any events yet.</text> }
+            </div>
+        }
+        else
+        {
+            @foreach (var ev in Filtered)
+            {
+                <div class="event-card">
+                    <div class="event-card-body">
+                        <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
+                            <span class="event-card-title">@ev.Title</span>
+                            <span class="badge @BadgeClass(ev.Status)">@ev.Status</span>
+                            @if (ev.IsVirtual)
+                            {
+                                <span class="badge" style="background:#f0f9ff;color:#0369a1">Virtual</span>
+                            }
+                        </div>
+                        @if (!string.IsNullOrEmpty(ev.Description))
+                        {
+                            <p class="event-card-desc mb-1">@ev.Description</p>
+                        }
+                        <div class="event-card-meta">
+                            📅 @ev.StartDateTime.ToLocalTime().ToString("g") – @ev.EndDateTime.ToLocalTime().ToString("t")
+                            @if (!ev.IsVirtual && !string.IsNullOrEmpty(ev.Location))
+                            {
+                                <text> · 📍 @ev.Location</text>
+                            }
+                        </div>
+                    </div>
+                    <div class="event-card-actions">
+                        @if (ev.Status == "Published")
+                        {
+                            <button class="btn btn-outline-primary btn-sm" @onclick="() => StartEdit(ev)">Edit</button>
+                            @if (ev.EndDateTime.ToUniversalTime() <= DateTime.UtcNow)
+                            {
+                                <button class="btn btn-success btn-sm" @onclick="() => CompleteEvent(ev)">Complete</button>
+                            }
+                        }
+                        else if (ev.Status == "Cancelled" || ev.Status == "Completed")
+                        {
+                            <span class="text-muted" style="font-size:.8rem">No actions</span>
+                        }
                     </div>
                 </div>
             }
-        </div>
-    }
-
-    <hr />
-    <h4>Create Event</h4>
-    <EditForm Model="createModel" OnValidSubmit="CreateEvent">
-        <DataAnnotationsValidator />
-        <div class="mb-3">
-            <label class="form-label">Title</label>
-            <InputText class="form-control" @bind-Value="createModel.Title" />
-        </div>
-        <div class="mb-3">
-            <label class="form-label">Start</label>
-            <InputDate class="form-control" @bind-Value="createModel.StartDateTime" />
-        </div>
-        <div class="mb-3">
-            <label class="form-label">End</label>
-            <InputDate class="form-control" @bind-Value="createModel.EndDateTime" />
-        </div>
-        <div class="mb-3">
-            <label class="form-label">Capacity (optional)</label>
-            <InputNumber class="form-control" @bind-Value="createModel.Capacity" />
-        </div>
-        <button class="btn btn-primary">Create</button>
-    </EditForm>
-
-    @if (createMessage is not null)
-    {
-        <div class="alert @createCss">@createMessage</div>
+        }
     }
 }
 
 @code {
-    private bool isLoading = false;
-    private string? error;
-    private List<CampusEventManager.Web.Models.EventDto> myEvents = new();
+    private bool _ready;
+    private bool _isLoading = true;
+    private string? _listError;
+    private List<EventDto> _allEvents = new();
+    private bool _loaded;
 
-    private CreateModel createModel = new() { StartDateTime = DateTime.UtcNow.AddDays(1), EndDateTime = DateTime.UtcNow.AddDays(1).AddHours(2) };
-    private string? createMessage;
-    private string createCss = "alert-info";
+    private bool _showCreateForm;
+    private EventDto? _editingEvent;
+    private EventFormModel _createModel = NewCreateModel();
+    private EventFormModel _editModel = new();
+    private string? _formMessage;
+    private string _formCss = "alert-info";
+    private bool _saving;
 
-    protected override async Task OnInitializedAsync()
+    private string _filterStatus = "";
+    private string _filterVirtual = "";
+
+    private string? _modalTitle;
+    private string? _modalMessage;
+
+    private EventDto? _confirmCancelEvent;
+
+    private IEnumerable<EventDto> Filtered => _allEvents.Where(ev =>
+        (string.IsNullOrEmpty(_filterStatus) || ev.Status == _filterStatus) &&
+        (string.IsNullOrEmpty(_filterVirtual) || (_filterVirtual == "virtual" ? ev.IsVirtual : !ev.IsVirtual))
+    );
+
+    protected override void OnInitialized() => Auth.OnChange += OnAuthChanged;
+    private void OnAuthChanged() => InvokeAsync(TryLoad);
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (!Auth.IsRestored)
-        {
-            return;
-        }
-
-        if (Auth.CurrentUser is null)
-        {
-            NavigationManager.NavigateTo("/login", true);
-            return;
-        }
-
-        if (!Auth.CurrentUser.CanCreateEvents)
-        {
-            // show permission error
-            return;
-        }
-
-        await LoadMyEvents();
+        if (firstRender) await TryLoad();
     }
+
+    private async Task TryLoad()
+    {
+        if (!Auth.IsRestored) return;
+        if (Auth.CurrentUser is null) { NavigationManager.NavigateTo("/login", true); return; }
+        _ready = true;
+        if (!Auth.CurrentUser.CanCreateEvents) { await InvokeAsync(StateHasChanged); return; }
+        if (_loaded) return;
+        _loaded = true;
+        await LoadMyEvents();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose() => Auth.OnChange -= OnAuthChanged;
 
     private async Task LoadMyEvents()
     {
-        isLoading = true;
+        _isLoading = true;
+        _listError = null;
         try
         {
-            var client = HttpFactory.CreateClient("apiservice");
-            var events = await client.GetFromJsonAsync<List<CampusEventManager.Web.Models.EventDto>>("/api/events");
-            if (events != null)
-            {
-                myEvents = events.Where(e => e.CreatedByUserId == Auth.CurrentUser.Id.ToString()).ToList();
-            }
+            var client = Auth.CreateAuthorizedClient("apiservice");
+            _allEvents = await client.GetFromJsonAsync<List<EventDto>>("/api/events/mine") ?? new();
         }
-        catch (Exception ex)
-        {
-            error = ex.Message;
-        }
-        finally
-        {
-            isLoading = false;
-        }
+        catch (Exception ex) { _listError = ex.Message; }
+        finally { _isLoading = false; }
     }
 
-    private void Edit(int id)
-    {
-        NavigationManager.NavigateTo($"/events/{id}");
-    }
-
-    private async Task Cancel(int id)
-    {
-        try
-        {
-            var client = HttpFactory.CreateClient("apiservice");
-            var resp = await client.PostAsJsonAsync($"/api/events/{id}/cancel", new { updatedByUserId = Auth.CurrentUser!.Id.ToString() });
-            if (resp.IsSuccessStatusCode)
-            {
-                await LoadMyEvents();
-            }
-            else
-            {
-                error = $"Failed to cancel event: {resp.StatusCode}";
-            }
-        }
-        catch (Exception ex)
-        {
-            error = ex.Message;
-        }
-    }
-
-    private async Task MarkComplete(int id)
-    {
-        try
-        {
-            var client = HttpFactory.CreateClient("apiservice");
-            var resp = await client.PostAsync($"/api/events/{id}/complete", null);
-            if (resp.IsSuccessStatusCode)
-            {
-                await LoadMyEvents();
-            }
-            else
-            {
-                error = $"Failed to mark complete: {resp.StatusCode}";
-            }
-        }
-        catch (Exception ex)
-        {
-            error = ex.Message;
-        }
-    }
+    // ── Create ────────────────────────────────────────────────
+    private void CancelCreate() { _showCreateForm = false; _formMessage = null; _createModel = NewCreateModel(); }
 
     private async Task CreateEvent()
     {
-        createMessage = null;
+        _saving = true; _formMessage = null;
         try
         {
-            var client = HttpFactory.CreateClient("apiservice");
-            var dto = new
-            {
-                title = createModel.Title,
-                description = createModel.Description,
-                startDateTime = createModel.StartDateTime,
-                endDateTime = createModel.EndDateTime,
-                isVirtual = createModel.IsVirtual,
-                location = createModel.Location,
-                meetingUrl = createModel.MeetingUrl,
-                capacity = createModel.Capacity,
-                createdByUserId = Auth.CurrentUser!.Id.ToString()
-            };
-
-            var resp = await client.PostAsJsonAsync("/api/events", dto);
+            var client = Auth.CreateAuthorizedClient("apiservice");
+            var resp = await client.PostAsJsonAsync("/api/events", BuildDto(_createModel));
             if (resp.IsSuccessStatusCode)
             {
-                createMessage = "Event created.";
-                createCss = "alert-success";
+                _showCreateForm = false;
+                _createModel = NewCreateModel();
+                await LoadMyEvents();
+                _formMessage = null;
+            }
+            else
+            {
+                var body = await resp.Content.ReadAsStringAsync();
+                _formMessage = ExtractError(body) ?? $"Failed ({(int)resp.StatusCode}).";
+                _formCss = "alert-danger";
+            }
+        }
+        catch (Exception ex) { _formMessage = ex.Message; _formCss = "alert-danger"; }
+        finally { _saving = false; StateHasChanged(); }
+    }
+
+    // ── Edit ──────────────────────────────────────────────────
+    private void StartEdit(EventDto ev)
+    {
+        _editingEvent = ev;
+        _showCreateForm = false;
+        _editModel = new EventFormModel
+        {
+            Title = ev.Title, Description = ev.Description,
+            StartDateTime = ev.StartDateTime.ToLocalTime(),
+            EndDateTime = ev.EndDateTime.ToLocalTime(),
+            IsVirtual = ev.IsVirtual, Location = ev.Location,
+            MeetingUrl = ev.MeetingUrl, Capacity = ev.Capacity
+        };
+        _formMessage = null;
+    }
+
+    private void CancelEdit() { _editingEvent = null; _formMessage = null; }
+
+    private async Task SaveEdit()
+    {
+        if (_editingEvent is null) return;
+        _saving = true; _formMessage = null;
+        try
+        {
+            var client = Auth.CreateAuthorizedClient("apiservice");
+            var resp = await client.PutAsJsonAsync($"/api/events/{_editingEvent.Id}", BuildDto(_editModel));
+            if (resp.IsSuccessStatusCode)
+            {
+                _editingEvent = null;
+                await LoadMyEvents();
+                _formMessage = null;
+            }
+            else
+            {
+                var body = await resp.Content.ReadAsStringAsync();
+                _formMessage = ExtractError(body) ?? $"Update failed ({(int)resp.StatusCode}).";
+                _formCss = "alert-danger";
+            }
+        }
+        catch (Exception ex) { _formMessage = ex.Message; _formCss = "alert-danger"; }
+        finally { _saving = false; StateHasChanged(); }
+    }
+
+    // ── Cancel event (from edit view) ─────────────────────────
+    private async Task RequestCancelFromEdit()
+    {
+        if (_editingEvent is null) return;
+        // First save the description update, then show confirmation
+        _saving = true; _formMessage = null;
+        try
+        {
+            var client = Auth.CreateAuthorizedClient("apiservice");
+            var resp = await client.PutAsJsonAsync($"/api/events/{_editingEvent.Id}", BuildDto(_editModel));
+            if (!resp.IsSuccessStatusCode)
+            {
+                var body = await resp.Content.ReadAsStringAsync();
+                _formMessage = ExtractError(body) ?? $"Could not save changes ({(int)resp.StatusCode}).";
+                _formCss = "alert-danger";
+                return;
+            }
+            // Refresh local copy so confirmation modal shows updated title
+            await LoadMyEvents();
+            var updated = _allEvents.FirstOrDefault(e => e.Id == _editingEvent.Id);
+            _confirmCancelEvent = updated ?? _editingEvent;
+        }
+        catch (Exception ex) { _formMessage = ex.Message; _formCss = "alert-danger"; }
+        finally { _saving = false; StateHasChanged(); }
+    }
+
+    private async Task ExecuteCancel()
+    {
+        if (_confirmCancelEvent is null) return;
+        _saving = true;
+        try
+        {
+            var client = Auth.CreateAuthorizedClient("apiservice");
+            var resp = await client.PostAsync($"/api/events/{_confirmCancelEvent.Id}/cancel", null);
+            if (resp.IsSuccessStatusCode)
+            {
+                _confirmCancelEvent = null;
+                _editingEvent = null;
+                _formMessage = null;
                 await LoadMyEvents();
             }
             else
             {
-                createMessage = $"Failed to create event: {resp.StatusCode}";
-                createCss = "alert-danger";
+                var b = await resp.Content.ReadAsStringAsync();
+                _formMessage = ExtractError(b) ?? $"Cancel failed ({(int)resp.StatusCode}).";
+                _formCss = "alert-danger";
+                _confirmCancelEvent = null;
             }
         }
-        catch (Exception ex)
-        {
-            createMessage = ex.Message;
-            createCss = "alert-danger";
-        }
+        catch (Exception ex) { _formMessage = ex.Message; _formCss = "alert-danger"; _confirmCancelEvent = null; }
+        finally { _saving = false; StateHasChanged(); }
     }
 
-    [Inject]
-    private NavigationManager NavigationManager { get; set; } = null!;
-
-    private class CreateModel
+    // ── Complete event ────────────────────────────────────────
+    private Task CompleteFromEdit()
     {
+        if (_editingEvent is null) return Task.CompletedTask;
+        return CompleteEvent(_editingEvent);
+    }
+
+    private async Task CompleteEvent(EventDto ev)
+    {
+        _listError = null;
+        try
+        {
+            var client = Auth.CreateAuthorizedClient("apiservice");
+            var resp = await client.PostAsync($"/api/events/{ev.Id}/complete", null);
+            if (resp.IsSuccessStatusCode)
+            {
+                _editingEvent = null;
+                await LoadMyEvents();
+            }
+            else
+            {
+                var body = await resp.Content.ReadAsStringAsync();
+                var msg = ExtractError(body);
+                if (msg is not null && msg.Contains("end time", StringComparison.OrdinalIgnoreCase))
+                {
+                    _modalTitle = "Cannot complete event yet";
+                    _modalMessage = msg;
+                }
+                else
+                {
+                    _listError = msg ?? $"Complete failed ({(int)resp.StatusCode}).";
+                }
+            }
+        }
+        catch (Exception ex) { _listError = ex.Message; }
+        finally { StateHasChanged(); }
+    }
+
+    private void CloseModal() { _modalTitle = null; _modalMessage = null; }
+    private void ResetFilters() { _filterStatus = ""; _filterVirtual = ""; }
+
+    // ── Helpers ───────────────────────────────────────────────
+    private static EventFormModel NewCreateModel() => new()
+    {
+        StartDateTime = DateTime.Now.AddDays(1),
+        EndDateTime = DateTime.Now.AddDays(1).AddHours(2)
+    };
+
+    private static object BuildDto(EventFormModel m) => new
+    {
+        m.Title, m.Description,
+        startDateTime = m.StartDateTime,
+        endDateTime = m.EndDateTime,
+        m.IsVirtual, m.Location, m.MeetingUrl, m.Capacity
+    };
+
+    private static string? ExtractError(string body)
+    {
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(body);
+            if (doc.RootElement.TryGetProperty("error", out var e)) return e.GetString();
+        }
+        catch { }
+        return string.IsNullOrWhiteSpace(body) ? null : body;
+    }
+
+    private static string BadgeClass(string status) => status switch
+    {
+        "Published" => "badge-published",
+        "Cancelled" => "badge-cancelled",
+        "Completed" => "badge-completed",
+        _ => "badge-completed"
+    };
+
+    private RenderFragment FormFields(EventFormModel m) => __builder =>
+    {
+        <div class="mb-3">
+            <label class="form-label">Title *</label>
+            <InputText class="form-control" @bind-Value="m.Title" />
+            <ValidationMessage For="@(() => m.Title)" />
+        </div>
+        <div class="mb-3">
+            <label class="form-label">Description</label>
+            <InputTextArea class="form-control" @bind-Value="m.Description" rows="2" />
+        </div>
+        <div class="row g-3 mb-3">
+            <div class="col-sm-6">
+                <label class="form-label">Start *</label>
+                <InputDate class="form-control" Type="InputDateType.DateTimeLocal" @bind-Value="m.StartDateTime" />
+            </div>
+            <div class="col-sm-6">
+                <label class="form-label">End *</label>
+                <InputDate class="form-control" Type="InputDateType.DateTimeLocal" @bind-Value="m.EndDateTime" />
+            </div>
+        </div>
+        <div class="mb-3 form-check">
+            <InputCheckbox class="form-check-input" @bind-Value="m.IsVirtual" id="chkVirtual" />
+            <label class="form-check-label" for="chkVirtual">Virtual event</label>
+        </div>
+        @if (m.IsVirtual)
+        {
+            <div class="mb-3">
+                <label class="form-label">Meeting URL</label>
+                <InputText class="form-control" @bind-Value="m.MeetingUrl" placeholder="https://…" />
+            </div>
+        }
+        else
+        {
+            <div class="mb-3">
+                <label class="form-label">Location</label>
+                <InputText class="form-control" @bind-Value="m.Location" />
+            </div>
+        }
+        <div class="mb-3">
+            <label class="form-label">Capacity (optional)</label>
+            <InputNumber class="form-control" @bind-Value="m.Capacity" />
+        </div>
+    };
+
+    private class EventDto
+    {
+        public int Id { get; set; }
+        public string Title { get; set; } = null!;
+        public string? Description { get; set; }
+        public DateTime StartDateTime { get; set; }
+        public DateTime EndDateTime { get; set; }
+        public bool IsVirtual { get; set; }
+        public string? Location { get; set; }
+        public string? MeetingUrl { get; set; }
+        public int? Capacity { get; set; }
+        public string Status { get; set; } = null!;
+    }
+
+    private class EventFormModel
+    {
+        [System.ComponentModel.DataAnnotations.Required]
         public string Title { get; set; } = string.Empty;
         public string? Description { get; set; }
         public DateTime StartDateTime { get; set; }

@@ -1,17 +1,18 @@
 @page "/my-registrations"
-@inject IHttpClientFactory HttpFactory
+@rendermode InteractiveServer
 @inject CampusEventManager.Web.Services.AuthService Auth
 @inject NavigationManager NavigationManager
+@implements IDisposable
 
 <PageTitle>My Registrations</PageTitle>
 
-@if (Auth.CurrentUser is null)
+<div class="page-header">
+    <h3>My Registrations</h3>
+</div>
+
+@if (isLoading)
 {
-    <p>Please <NavLink href="/login">sign in</NavLink> to view your registrations.</p>
-}
-else if (isLoading)
-{
-    <p>Loading...</p>
+    <p class="text-muted">Loading...</p>
 }
 else if (error is not null)
 {
@@ -19,51 +20,59 @@ else if (error is not null)
 }
 else if (!regs.Any())
 {
-    <p>You have no registrations.</p>
+    <div class="alert alert-info">You have no registrations yet.</div>
 }
 else
 {
-    <div class="list-group">
-        @foreach (var r in regs)
-        {
-            <div class="list-group-item">
-                <div class="d-flex w-100 justify-content-between">
-                    <h5 class="mb-1">@GetEventTitle(r.EventId)</h5>
-                    <small>@r.RegisteredAt.ToLocalTime().ToString("g")</small>
+    @foreach (var r in regs)
+    {
+        <div class="event-card">
+            <div class="event-card-body">
+                <div class="event-card-title">
+                    <a href="/events/@r.EventId" style="color:inherit;text-decoration:none">
+                        @(r.EventTitle ?? $"Event {r.EventId}")
+                    </a>
                 </div>
-                <p class="mb-1">Role: @r.Role</p>
-                <button class="btn btn-danger" disabled="@r.InFlight" @onclick="() => Cancel(r)">Cancel</button>
+                <div class="event-card-meta">
+                    Role: <strong>@r.Role</strong> · Registered @r.RegisteredAt.ToLocalTime().ToString("g")
+                </div>
                 @if (!string.IsNullOrEmpty(r.ErrorMessage))
                 {
-                    <div class="text-danger mt-2">@r.ErrorMessage</div>
+                    <div class="alert alert-danger mt-1" style="padding:.4rem .7rem;font-size:.8rem">@r.ErrorMessage</div>
                 }
             </div>
-        }
-    </div>
+            <div class="event-card-actions">
+                <button class="btn btn-outline-danger btn-sm" disabled="@r.InFlight" @onclick="() => Cancel(r)">
+                    @(r.InFlight ? "Cancelling…" : "Cancel")
+                </button>
+            </div>
+        </div>
+    }
 }
 
 @code {
-    private bool isLoading;
+    private bool isLoading = true;
     private string? error;
     private List<RegistrationItem> regs = new();
+    private bool _loaded;
 
-    protected override async Task OnInitializedAsync()
+    protected override void OnInitialized() => Auth.OnChange += OnAuthChanged;
+    private void OnAuthChanged() => InvokeAsync(TryLoad);
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (!Auth.IsRestored)
-        {
-            return;
-        }
+        if (firstRender) await TryLoad();
+    }
 
-        if (Auth.CurrentUser is null)
-        {
-            NavigationManager.NavigateTo("/login", true);
-            return;
-        }
-
-        isLoading = true;
+    private async Task TryLoad()
+    {
+        if (!Auth.IsRestored) return;
+        if (Auth.CurrentUser is null) { NavigationManager.NavigateTo("/login", true); return; }
+        if (_loaded) return;
+        _loaded = true;
         try
         {
-            var client = HttpFactory.CreateClient("registration");
+            var client = Auth.CreateAuthorizedClient("registration");
             var list = await client.GetFromJsonAsync<List<RegistrationDto>>("/api/registrations/me");
             if (list != null)
             {
@@ -74,79 +83,53 @@ else
                     Role = r.Role,
                     RegisteredAt = r.RegisteredAt
                 }).ToList();
-
-                // Preload event titles
                 foreach (var item in regs)
-                {
-                    _ = LoadEventTitle(item.EventId);
-                }
+                    _ = LoadEventTitle(item);
             }
         }
-        catch (Exception ex)
-        {
-            error = ex.Message;
-        }
-        finally
-        {
-            isLoading = false;
-        }
+        catch (Exception ex) { error = ex.Message; }
+        finally { isLoading = false; await InvokeAsync(StateHasChanged); }
     }
 
-    private async Task LoadEventTitle(int eventId)
+    public void Dispose() => Auth.OnChange -= OnAuthChanged;
+
+    private async Task LoadEventTitle(RegistrationItem item)
     {
         try
         {
-            var client = HttpFactory.CreateClient("apiservice");
-            var ev = await client.GetFromJsonAsync<CampusEventManager.Web.Models.EventDto>($"/api/events/{eventId}");
-            var item = regs.FirstOrDefault(r => r.EventId == eventId);
-            if (item != null)
-            {
-                item.EventTitle = ev?.Title ?? $"Event {eventId}";
-                StateHasChanged();
-            }
+            var client = Auth.CreateAuthorizedClient("apiservice");
+            var ev = await client.GetFromJsonAsync<EventTitleDto>($"/api/events/{item.EventId}");
+            item.EventTitle = ev?.Title ?? $"Event {item.EventId}";
+            await InvokeAsync(StateHasChanged);
         }
         catch { }
     }
-
-    private string GetEventTitle(int eventId) => regs.FirstOrDefault(r => r.EventId == eventId)?.EventTitle ?? $"Event {eventId}";
 
     private async Task Cancel(RegistrationItem r)
     {
         r.InFlight = true;
         r.ErrorMessage = null;
+        StateHasChanged();
         try
         {
-            var client = HttpFactory.CreateClient("registration");
+            var client = Auth.CreateAuthorizedClient("registration");
             var resp = await client.DeleteAsync($"/api/registrations/{r.Id}");
             if (resp.IsSuccessStatusCode)
-            {
                 regs.Remove(r);
-            }
             else if (resp.StatusCode == System.Net.HttpStatusCode.Forbidden)
-            {
                 r.ErrorMessage = "You cannot cancel this registration.";
-            }
             else
-            {
-                r.ErrorMessage = $"Failed to cancel: {resp.StatusCode}";
-            }
+                r.ErrorMessage = $"Failed to cancel ({(int)resp.StatusCode}).";
         }
-        catch (Exception ex)
-        {
-            r.ErrorMessage = ex.Message;
-        }
-        finally
-        {
-            r.InFlight = false;
-            StateHasChanged();
-        }
+        catch (Exception ex) { r.ErrorMessage = ex.Message; }
+        finally { r.InFlight = false; StateHasChanged(); }
     }
 
     private class RegistrationItem
     {
         public int Id { get; set; }
         public int EventId { get; set; }
-        public string Role { get; set; } = null!;
+        public string Role { get; set; } = string.Empty;
         public DateTime RegisteredAt { get; set; }
         public bool InFlight { get; set; }
         public string? ErrorMessage { get; set; }
@@ -158,7 +141,9 @@ else
         public int Id { get; set; }
         public int UserId { get; set; }
         public int EventId { get; set; }
-        public string Role { get; set; } = null!;
+        public string Role { get; set; } = string.Empty;
         public DateTime RegisteredAt { get; set; }
     }
+
+    private class EventTitleDto { public string Title { get; set; } = null!; }
 }

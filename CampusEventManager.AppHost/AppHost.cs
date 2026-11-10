@@ -35,12 +35,15 @@ var registrationService = builder.AddProject<Projects.RegistrationService>("regi
     .WithReference(apiService)
     .WithReference(notificationService)
     .WaitFor(apiService)
-    .WaitFor(notificationService)
-    .WithReference(notificationService); // ensure Dashboard links to notification service
+    .WaitFor(notificationService);
 
 builder.AddProject<Projects.CampusEventManager_Web>("webfrontend")
     .WithExternalHttpEndpoints()
     .WithHttpHealthCheck("/health")
     .WithReference(apiService)
-    .WaitFor(apiService);
+    .WithReference(registrationService)
+    .WithReference(notificationService)
+    .WaitFor(apiService)
+    .WaitFor(registrationService)
+    .WaitFor(notificationService);
 builder.Build().Run();

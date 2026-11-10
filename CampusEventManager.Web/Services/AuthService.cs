@@ -10,12 +10,27 @@ public class AuthService
     public CampusEventManager.Web.Models.UserProfile? CurrentUser { get; private set; }
     public string? Token { get; private set; }
     public bool IsRestored { get; private set; }
+    public event Action? OnChange;
+    public event Action<int>? OnUnreadCountChanged;
+    public event Action? OnUnreadRefreshRequested;
 
     public AuthService(IHttpClientFactory httpFactory, TokenStorage storage)
     {
         _httpFactory = httpFactory;
         _storage = storage;
     }
+
+    // Returns an HttpClient with the current Bearer token already set.
+    public HttpClient CreateAuthorizedClient(string name)
+    {
+        var client = _httpFactory.CreateClient(name);
+        if (!string.IsNullOrEmpty(Token))
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Token);
+        return client;
+    }
+
+    public void NotifyUnreadCount(int count) => OnUnreadCountChanged?.Invoke(count);
+    public void RequestUnreadRefresh() => OnUnreadRefreshRequested?.Invoke();
 
     public async Task<bool> LoginAsync(string email, string password)
     {
@@ -27,17 +42,20 @@ public class AuthService
         {
             Token = t.GetString();
             if (!string.IsNullOrEmpty(Token))
-            {
                 await _storage.SetTokenAsync(Token);
-            }
-            // populate current user
+
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Token);
             var meResp = await client.GetAsync("/api/auth/me");
             if (!meResp.IsSuccessStatusCode) return false;
             CurrentUser = await meResp.Content.ReadFromJsonAsync<CampusEventManager.Web.Models.UserProfile>();
-            return CurrentUser is not null;
+            if (CurrentUser is not null)
+            {
+                IsRestored = true;
+                OnChange?.Invoke();
+                return true;
+            }
+            return false;
         }
-
         return false;
     }
 
@@ -45,11 +63,12 @@ public class AuthService
     {
         Token = null;
         CurrentUser = null;
+        IsRestored = true;
         _ = _storage.RemoveTokenAsync();
+        OnChange?.Invoke();
+        OnUnreadCountChanged?.Invoke(0);
     }
 
-    // Returns: true = restored and authenticated, false = restored and not authenticated,
-    // null = prerendering blocked (JS not available) - caller should retry later
     public async Task<bool?> TryRestoreAsync()
     {
         try
@@ -63,11 +82,10 @@ public class AuthService
 
             Token = tok;
             var client = _httpFactory.CreateClient("registration");
-            client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", Token);
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Token);
             var meResp = await client.GetAsync("/api/auth/me");
             if (!meResp.IsSuccessStatusCode)
             {
-                // If unauthorized, clear stored token; otherwise treat as transient failure and keep token.
                 if (meResp.StatusCode == System.Net.HttpStatusCode.Unauthorized || meResp.StatusCode == System.Net.HttpStatusCode.Forbidden)
                 {
                     Token = null;
@@ -75,24 +93,21 @@ public class AuthService
                     IsRestored = true;
                     return false;
                 }
-
-                // Transient or server error: mark restored so UI can decide; do not remove token.
                 IsRestored = true;
                 return false;
             }
 
             CurrentUser = await meResp.Content.ReadFromJsonAsync<CampusEventManager.Web.Models.UserProfile>();
             IsRestored = true;
+            OnChange?.Invoke();
             return CurrentUser is not null;
         }
         catch (InvalidOperationException)
         {
-            // JS interop not available in prerender; signal caller to retry later
             return null;
         }
         catch
         {
-            // Transient errors: mark restored to avoid indefinite wait, but treat as not authenticated
             IsRestored = true;
             return false;
         }

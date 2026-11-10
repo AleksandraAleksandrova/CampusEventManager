@@ -24,6 +24,8 @@ builder.Services.AddHttpClient("registration", client => client.BaseAddress = ne
     .AddHttpMessageHandler<CampusEventManager.Web.Services.AuthHeaderHandler>();
 builder.Services.AddHttpClient("notification", client => client.BaseAddress = new Uri("https+http://notificationservice"))
     .AddHttpMessageHandler<CampusEventManager.Web.Services.AuthHeaderHandler>();
+builder.Services.AddHttpClient("apiservice", client => client.BaseAddress = new Uri("https+http://apiservice"))
+    .AddHttpMessageHandler<CampusEventManager.Web.Services.AuthHeaderHandler>();
 
 var app = builder.Build();
 

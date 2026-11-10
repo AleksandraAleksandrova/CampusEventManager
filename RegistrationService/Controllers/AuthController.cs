@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -16,7 +17,10 @@ public class AuthController : ControllerBase
     private readonly IPasswordHasher<RegistrationService.Models.User> _hasher;
     private readonly IConfiguration _config;
 
-    public AuthController(RegistrationService.Data.RegistrationDbContext db, IPasswordHasher<RegistrationService.Models.User> hasher, IConfiguration config)
+    public AuthController(
+        RegistrationService.Data.RegistrationDbContext db,
+        IPasswordHasher<RegistrationService.Models.User> hasher,
+        IConfiguration config)
     {
         _db = db;
         _hasher = hasher;
@@ -28,15 +32,15 @@ public class AuthController : ControllerBase
     {
         if (!ModelState.IsValid) return BadRequest(ModelState);
 
-        if (await _db.Users.AnyAsync(u => u.Email == req.Email)) return Conflict(new { error = "Email already registered." });
+        if (await _db.Users.AnyAsync(u => u.Email == req.Email))
+            return Conflict(new { error = "Email already registered." });
 
         var user = new RegistrationService.Models.User
         {
             DisplayName = req.DisplayName,
             Email = req.Email,
-            CanCreateEvents = false // never allow self-elevation
+            CanCreateEvents = false   // public registration never grants creator rights
         };
-
         user.PasswordHash = _hasher.HashPassword(user, req.Password);
 
         _db.Users.Add(user);
@@ -49,45 +53,49 @@ public class AuthController : ControllerBase
     public async Task<IActionResult> Login([FromBody] LoginRequest req)
     {
         var user = await _db.Users.SingleOrDefaultAsync(u => u.Email == req.Email);
-        if (user == null) return Unauthorized();
+        if (user is null) return Unauthorized();
 
         var result = _hasher.VerifyHashedPassword(user, user.PasswordHash, req.Password);
         if (result == PasswordVerificationResult.Failed) return Unauthorized();
 
-        var token = CreateToken(user);
-
-        return Ok(new { access_token = token });
+        return Ok(new { access_token = CreateToken(user) });
     }
 
+    [Authorize]
     [HttpGet("me")]
     public async Task<IActionResult> Me()
     {
         var uid = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
-        if (string.IsNullOrEmpty(uid)) return Unauthorized();
-
-        if (!int.TryParse(uid, out var id)) return Unauthorized();
+        if (string.IsNullOrEmpty(uid) || !int.TryParse(uid, out var id)) return Unauthorized();
 
         var user = await _db.Users.FindAsync(id);
-        if (user == null) return NotFound();
+        if (user is null) return NotFound();
 
         return Ok(new { user.Id, user.DisplayName, user.Email, user.CanCreateEvents });
     }
 
     private string CreateToken(RegistrationService.Models.User user)
     {
-        var issuer = _config["Jwt:Issuer"] ?? "registration.local";
-        var audience = _config["Jwt:Audience"] ?? "registration.local";
-        var key = _config["Jwt:Key"] ?? "dev_signing_key_not_secure";
+        var issuer   = _config["Jwt:Issuer"]   ?? "campus-event-manager";
+        var audience = _config["Jwt:Audience"] ?? "campus-event-manager";
+        var keyRaw   = _config["Jwt:Key"]      ?? "dev-only-key-32bytes-padding!!!!!";
 
-        var claims = new List<Claim>
+        var keyBytes = Encoding.UTF8.GetBytes(keyRaw);
+        var creds = new SigningCredentials(
+            new SymmetricSecurityKey(keyBytes),
+            SecurityAlgorithms.HmacSha256);
+
+        var claims = new[]
         {
             new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
-            new Claim("canCreateEvents", user.CanCreateEvents.ToString())
+            new Claim("canCreateEvents", user.CanCreateEvents.ToString().ToLowerInvariant())
         };
 
-        var creds = new SigningCredentials(new SymmetricSecurityKey(Encoding.UTF8.GetBytes(key)), SecurityAlgorithms.HmacSha256);
+        var token = new JwtSecurityToken(
+            issuer, audience, claims,
+            expires: DateTime.UtcNow.AddHours(6),
+            signingCredentials: creds);
 
-        var token = new JwtSecurityToken(issuer, audience, claims, expires: DateTime.UtcNow.AddHours(6), signingCredentials: creds);
         return new JwtSecurityTokenHandler().WriteToken(token);
     }
 
