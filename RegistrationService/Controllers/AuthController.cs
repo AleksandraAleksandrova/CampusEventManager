@@ -15,16 +15,16 @@ public class AuthController : ControllerBase
 {
     private readonly RegistrationService.Data.RegistrationDbContext _db;
     private readonly IPasswordHasher<RegistrationService.Models.User> _hasher;
-    private readonly IConfiguration _config;
+    private readonly JwtSettings _jwt;
 
     public AuthController(
         RegistrationService.Data.RegistrationDbContext db,
         IPasswordHasher<RegistrationService.Models.User> hasher,
-        IConfiguration config)
+        JwtSettings jwt)
     {
         _db = db;
         _hasher = hasher;
-        _config = config;
+        _jwt = jwt;
     }
 
     [HttpPost("register")]
@@ -76,13 +76,8 @@ public class AuthController : ControllerBase
 
     private string CreateToken(RegistrationService.Models.User user)
     {
-        var issuer   = _config["Jwt:Issuer"]   ?? "campus-event-manager";
-        var audience = _config["Jwt:Audience"] ?? "campus-event-manager";
-        var keyRaw   = _config["Jwt:Key"]      ?? "dev-only-key-32bytes-padding!!!!!";
-
-        var keyBytes = Encoding.UTF8.GetBytes(keyRaw);
         var creds = new SigningCredentials(
-            new SymmetricSecurityKey(keyBytes),
+            new SymmetricSecurityKey(_jwt.KeyBytes),
             SecurityAlgorithms.HmacSha256);
 
         var claims = new[]
@@ -92,7 +87,7 @@ public class AuthController : ControllerBase
         };
 
         var token = new JwtSecurityToken(
-            issuer, audience, claims,
+            _jwt.Issuer, _jwt.Audience, claims,
             expires: DateTime.UtcNow.AddHours(6),
             signingCredentials: creds);
 

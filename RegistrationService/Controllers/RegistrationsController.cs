@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Data.Sqlite;
 using System.Security.Claims;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -47,32 +48,68 @@ public class RegistrationsController : ControllerBase
         if (ev.Status != RegistrationService.Dtos.EventStatus.Published)
             return BadRequest(new { error = "Event is not published." });
 
-        if (req.Role == RegistrationService.Models.RegistrationRole.Attendee && ev.Capacity.HasValue)
+        // Event creator cannot register as Attendee or Volunteer for their own event.
+        if (!string.IsNullOrEmpty(ev.CreatedByUserId) &&
+            int.TryParse(ev.CreatedByUserId, out var creatorId) &&
+            creatorId == uid.Value)
         {
-            var count = await _db.Registrations.CountAsync(r =>
-                r.EventId == req.EventId && r.Role == RegistrationService.Models.RegistrationRole.Attendee);
-            if (count >= ev.Capacity.Value)
-                return BadRequest(new { error = "Event capacity reached." });
+            return BadRequest(new { error = "You cannot register for an event you created." });
         }
 
-        var existing = await _db.Registrations.SingleOrDefaultAsync(r => r.UserId == uid.Value && r.EventId == req.EventId);
-        if (existing != null) return Conflict(new { error = "You are already registered for this event." });
-
-        var reg = new RegistrationService.Models.Registration
+        // Use a serializable transaction to atomically check capacity and insert.
+        // This prevents two concurrent requests from both passing the capacity check
+        // and both inserting, which would exceed the limit.
+        await using var transaction = await _db.Database.BeginTransactionAsync(
+            System.Data.IsolationLevel.Serializable);
+        try
         {
-            UserId = uid.Value,
-            EventId = req.EventId,
-            Role = req.Role,
-            RegisteredAt = DateTime.UtcNow
-        };
+            var existing = await _db.Registrations
+                .SingleOrDefaultAsync(r => r.UserId == uid.Value && r.EventId == req.EventId);
+            if (existing != null)
+            {
+                await transaction.RollbackAsync();
+                return Conflict(new { error = "You are already registered for this event." });
+            }
 
-        _db.Registrations.Add(reg);
-        await _db.SaveChangesAsync();
+            if (req.Role == RegistrationService.Models.RegistrationRole.Attendee && ev.Capacity.HasValue)
+            {
+                var count = await _db.Registrations.CountAsync(r =>
+                    r.EventId == req.EventId && r.Role == RegistrationService.Models.RegistrationRole.Attendee);
+                if (count >= ev.Capacity.Value)
+                {
+                    await transaction.RollbackAsync();
+                    return BadRequest(new { error = "Event capacity reached." });
+                }
+            }
 
-        // Notifications — best-effort, do not fail the registration
-        _ = SendRegistrationNotificationsAsync(uid.Value, req.EventId, ev.Title ?? $"Event {req.EventId}", req.Role, ev.CreatedByUserId);
+            var reg = new RegistrationService.Models.Registration
+            {
+                UserId = uid.Value,
+                EventId = req.EventId,
+                Role = req.Role,
+                RegisteredAt = DateTime.UtcNow
+            };
 
-        return CreatedAtAction(nameof(GetMyRegistrations), new { id = reg.Id }, reg);
+            _db.Registrations.Add(reg);
+            await _db.SaveChangesAsync();
+            await transaction.CommitAsync();
+
+            // Notifications — best-effort, do not fail the registration
+            _ = SendRegistrationNotificationsAsync(uid.Value, req.EventId, ev.Title ?? $"Event {req.EventId}", req.Role, ev.CreatedByUserId);
+
+            return CreatedAtAction(nameof(GetMyRegistrations), new { id = reg.Id }, reg);
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is SqliteException { SqliteErrorCode: 19 })
+        {
+            // SQLITE_CONSTRAINT (19) — unique index violation: duplicate (UserId, EventId)
+            await transaction.RollbackAsync();
+            return Conflict(new { error = "You are already registered for this event." });
+        }
+        catch
+        {
+            await transaction.RollbackAsync();
+            throw;
+        }
     }
 
     [Authorize]
@@ -95,6 +132,16 @@ public class RegistrationsController : ControllerBase
             .Distinct()
             .ToListAsync();
         return Ok(userIds);
+    }
+
+    // Returns the number of Attendee registrations for an event (used by frontend for capacity display)
+    [HttpGet("event/{eventId:int}/attendee-count")]
+    public async Task<IActionResult> GetAttendeeCount(int eventId)
+    {
+        var count = await _db.Registrations.CountAsync(r =>
+            r.EventId == eventId &&
+            r.Role == RegistrationService.Models.RegistrationRole.Attendee);
+        return Ok(new { count });
     }
 
     [Authorize]

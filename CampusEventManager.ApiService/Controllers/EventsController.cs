@@ -66,6 +66,10 @@ public class EventsController : ControllerBase
         var uid = GetUserId();
         if (uid is null) return Unauthorized();
 
+        var canCreate = User.FindFirstValue("canCreateEvents");
+        if (!string.Equals(canCreate, "true", StringComparison.OrdinalIgnoreCase))
+            return Forbid();
+
         var validation = ValidateEventDto(dto.Title, dto.StartDateTime, dto.EndDateTime, dto.IsVirtual, dto.Location, dto.MeetingUrl, dto.Capacity);
         if (validation is not null) return BadRequest(validation);
 

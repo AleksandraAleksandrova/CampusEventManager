@@ -31,6 +31,10 @@
         <label class="form-label">Location</label>
         <input type="text" class="form-control" placeholder="Search location…" @bind="_filterLocation" @bind:event="oninput" />
     </div>
+    <div>
+        <label class="form-label">Title</label>
+        <input type="text" class="form-control" placeholder="Search title…" @bind="_filterTitle" @bind:event="oninput" />
+    </div>
     <div style="align-self:flex-end">
         <button class="btn btn-outline-secondary btn-sm" @onclick="ResetFilters">Reset</button>
     </div>
@@ -93,6 +97,7 @@ else
     private DateTime? _filterTo;
     private string _filterVirtual = "";
     private string _filterLocation = "";
+    private string _filterTitle = "";
 
     private IEnumerable<EventDto> Filtered => _allEvents.Where(ev =>
         (_filterFrom is null || ev.StartDateTime.ToLocalTime().Date >= _filterFrom.Value.Date) &&
@@ -100,7 +105,9 @@ else
         (_filterVirtual == "" || (_filterVirtual == "virtual" ? ev.IsVirtual : !ev.IsVirtual)) &&
         (string.IsNullOrWhiteSpace(_filterLocation) ||
             (ev.Location ?? "").Contains(_filterLocation, StringComparison.OrdinalIgnoreCase) ||
-            (ev.MeetingUrl ?? "").Contains(_filterLocation, StringComparison.OrdinalIgnoreCase))
+            (ev.MeetingUrl ?? "").Contains(_filterLocation, StringComparison.OrdinalIgnoreCase)) &&
+        (string.IsNullOrWhiteSpace(_filterTitle) ||
+            ev.Title.Contains(_filterTitle.Trim(), StringComparison.OrdinalIgnoreCase))
     );
 
     protected override void OnInitialized() => Auth.OnChange += OnAuthChanged;
@@ -132,6 +139,7 @@ else
         _filterTo = null;
         _filterVirtual = "";
         _filterLocation = "";
+        _filterTitle = "";
     }
 
     public void Dispose() => Auth.OnChange -= OnAuthChanged;

@@ -58,6 +58,15 @@ builder.Services.AddAuthorization();
 // Password hasher
 builder.Services.AddScoped<IPasswordHasher<RegistrationService.Models.User>, PasswordHasher<RegistrationService.Models.User>>();
 
+// Register validated JWT settings as a singleton so AuthController uses the same key
+// that was validated at startup — no fallback in token generation.
+builder.Services.AddSingleton(new RegistrationService.JwtSettings
+{
+    Issuer = jwtIssuer,
+    Audience = jwtAudience,
+    KeyBytes = jwtKeyBytes
+});
+
 var app = builder.Build();
 
 app.MapDefaultEndpoints();

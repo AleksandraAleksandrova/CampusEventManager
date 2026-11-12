@@ -49,10 +49,14 @@ else
         <div class="card">
             <div class="card-body">
                 <h4>Registration</h4>
-                @if (myRegistration is not null)
+                @if (IsOwner)
+                {
+                    <div class="alert alert-info mb-0">You are the organizer of this event.</div>
+                }
+                else if (myRegistration is not null)
                 {
                     <div class="alert alert-success mb-2">
-                        @registrationMessage
+                        You are registered as @myRegistration.Role.
                     </div>
                     <button class="btn btn-outline-danger btn-sm" @onclick="CancelMyRegistration" disabled="@isRegistering">
                         @(isRegistering ? "Cancelling..." : "Cancel my registration")
@@ -61,9 +65,16 @@ else
                 else
                 {
                     <div class="d-flex gap-2 mb-2">
-                        <button class="btn btn-primary" @onclick="RegisterAttendee" disabled="@isRegistering">
-                            @(isRegistering ? "Registering..." : "Register as Attendee")
-                        </button>
+                        @if (!AttendeeFull)
+                        {
+                            <button class="btn btn-primary" @onclick="RegisterAttendee" disabled="@isRegistering">
+                                @(isRegistering ? "Registering..." : "Register as Attendee")
+                            </button>
+                        }
+                        else
+                        {
+                            <span class="text-muted" style="align-self:center;font-size:.875rem">Attendee spots full</span>
+                        }
                         <button class="btn btn-secondary" @onclick="RegisterVolunteer" disabled="@isRegistering">
                             @(isRegistering ? "Registering..." : "Register as Volunteer")
                         </button>
@@ -93,6 +104,11 @@ else
     private string? registrationMessage;
     private string registrationCss = "alert-info";
     private bool _loaded;
+    private int _attendeeCount;
+
+    private bool IsOwner => ev is not null && Auth.CurrentUser is not null &&
+        ev.CreatedByUserId == Auth.CurrentUser.Id.ToString();
+    private bool AttendeeFull => ev?.Capacity.HasValue == true && _attendeeCount >= ev.Capacity!.Value;
 
     protected override void OnInitialized() => Auth.OnChange += OnAuthChanged;
     private void OnAuthChanged() => InvokeAsync(TryLoad);
@@ -113,13 +129,25 @@ else
             var apiClient = Auth.CreateAuthorizedClient("apiservice");
             ev = await apiClient.GetFromJsonAsync<EventDto>($"/api/events/{Id}");
 
-            // Check if user already has a registration for this event
             var regClient = Auth.CreateAuthorizedClient("registration");
             var regs = await regClient.GetFromJsonAsync<List<RegistrationDto>>("/api/registrations/me");
             myRegistration = regs?.FirstOrDefault(r => r.EventId == Id);
+
+            await RefreshAttendeeCountAsync();
         }
         catch (Exception ex) { error = ex.Message; }
         finally { isLoading = false; await InvokeAsync(StateHasChanged); }
+    }
+
+    private async Task RefreshAttendeeCountAsync()
+    {
+        try
+        {
+            var regClient = Auth.CreateAuthorizedClient("registration");
+            var result = await regClient.GetFromJsonAsync<AttendeeCountDto>($"/api/registrations/event/{Id}/attendee-count");
+            _attendeeCount = result?.Count ?? 0;
+        }
+        catch { /* non-critical — capacity display degrades gracefully */ }
     }
 
     public void Dispose() => Auth.OnChange -= OnAuthChanged;
@@ -150,6 +178,7 @@ else
                 var regs = await Auth.CreateAuthorizedClient("registration")
                     .GetFromJsonAsync<List<RegistrationDto>>("/api/registrations/me");
                 myRegistration = regs?.FirstOrDefault(r => r.EventId == Id);
+                await RefreshAttendeeCountAsync();
                 registrationMessage = $"You are successfully registered as a {role.ToLowerInvariant()} for this event.";
                 registrationCss = "alert-success";
                 Auth.RequestUnreadRefresh();
@@ -186,6 +215,7 @@ else
                 myRegistration = null;
                 registrationMessage = null;
                 registrationCss = "alert-info";
+                await RefreshAttendeeCountAsync();
                 Auth.RequestUnreadRefresh();
             }
             else
@@ -210,6 +240,12 @@ else
         public string? MeetingUrl { get; set; }
         public int? Capacity { get; set; }
         public string Status { get; set; } = null!;
+        public string? CreatedByUserId { get; set; }
+    }
+
+    private class AttendeeCountDto
+    {
+        public int Count { get; set; }
     }
 
     private class RegistrationDto
